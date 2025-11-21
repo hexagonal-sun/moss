@@ -10,10 +10,10 @@ use alloc::{
 use creds::Credentials;
 use ctx::{Context, UserCtx};
 use fd_table::FileDescriptorTable;
-use libkernel::memory::{
+use libkernel::{fs::pathbuf::PathBuf, memory::{
     address::VA,
     proc_vm::{ProcessVM, vmarea::VMArea},
-};
+}};
 use libkernel::{VirtualMemory, fs::Inode};
 use thread_group::{
     Tgid, ThreadGroup,
@@ -115,7 +115,7 @@ pub struct Task {
     pub tid: Tid,
     pub process: Arc<ThreadGroup>,
     pub vm: Arc<SpinLock<ProcVM>>,
-    pub cwd: Arc<SpinLock<Arc<dyn Inode>>>,
+    pub cwd: Arc<SpinLock<(Arc<dyn Inode>, PathBuf)>>,
     pub creds: SpinLock<Credentials>,
     pub fd_table: Arc<SpinLock<FileDescriptorTable>>,
     pub ctx: SpinLock<Context>,
@@ -142,7 +142,7 @@ impl Task {
             process: thread_group_builder.build(),
             state: Arc::new(SpinLock::new(TaskState::Runnable)),
             priority: i8::MIN,
-            cwd: Arc::new(SpinLock::new(Arc::new(DummyInode {}))),
+            cwd: Arc::new(SpinLock::new((Arc::new(DummyInode {}), PathBuf::new()))),
             creds: SpinLock::new(Credentials::new_root()),
             ctx: SpinLock::new(Context::from_user_ctx(user_ctx)),
             vm: Arc::new(SpinLock::new(vm)),
@@ -157,7 +157,7 @@ impl Task {
             tid: Tid(1),
             process: ThreadGroupBuilder::new(Tgid::init()).build(),
             state: Arc::new(SpinLock::new(TaskState::Runnable)),
-            cwd: Arc::new(SpinLock::new(Arc::new(DummyInode {}))),
+            cwd: Arc::new(SpinLock::new((Arc::new(DummyInode {}), PathBuf::new()))),
             creds: SpinLock::new(Credentials::new_root()),
             vm: Arc::new(SpinLock::new(
                 ProcessVM::empty().expect("Could not create init process's VM"),

@@ -11,7 +11,7 @@ use crate::{
                 readlink::sys_readlinkat,
                 stat::sys_newfstatat,
             },
-            chdir::sys_chdir,
+            chdir::{sys_chdir, sys_getcwd},
             close::sys_close,
             ioctl::sys_ioctl,
             iov::{sys_readv, sys_writev},
@@ -79,6 +79,7 @@ pub async fn handle_syscall() {
     };
 
     let res = match nr {
+        0x11 => sys_getcwd(TUA::from_value(arg1 as _), arg2 as _).await,
         0x17 => sys_dup(arg1.into()),
         0x18 => sys_dup3(arg1.into(), arg2.into(), arg3 as _),
         0x19 => sys_fcntl(arg1.into(), arg2 as _, arg3 as _).await,

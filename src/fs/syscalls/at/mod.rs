@@ -30,7 +30,7 @@ async fn resolve_at_start_node(dirfd: Fd, path: &Path) -> Result<Arc<dyn Inode>>
         VFS.root_inode()
     } else if dirfd.is_atcwd() {
         // Path is relative to the current working directory.
-        task.cwd.lock_save_irq().clone()
+        task.cwd.lock_save_irq().0.clone()
     } else {
         // Path is relative to the directory specified by dirfd.
         let file = task
