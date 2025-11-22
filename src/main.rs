@@ -95,7 +95,7 @@ async fn launch_init(opts: KOptions) {
         let mount_point = VFS
             .resolve_path(path, VFS.root_inode())
             .await
-            .unwrap_or_else(|e| panic!("Could not find automount path: {e}"));
+            .unwrap_or_else(|e| panic!("Could not find automount path: {}. {e}", path.as_str()));
 
         VFS.mount(mount_point, fs, None)
             .await

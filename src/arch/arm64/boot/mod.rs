@@ -123,9 +123,14 @@ fn arch_init_stage2(frame: *mut ExceptionState) -> *mut ExceptionState {
     cpu_messenger_init(cpu_count());
 
     kmain(
-        "--init=/bin/sh --rootfs=fat32fs --automount=/dev,devfs".to_string(),
+        "--init=/bin/bash --rootfs=fat32fs --automount=/dev,devfs".to_string(),
         frame,
     );
+
+    // kmain(
+    //     "--init='/bin/busybox sh' --rootfs=fat32fs --automount=/dev,devfs".to_string(),
+    //     frame,
+    // );
 
     boot_secondaries();
 
