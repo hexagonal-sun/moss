@@ -66,12 +66,12 @@ x86) before running on bare metal.
 ## Building and Running
 
 ### Prerequisites
-You will need QEMU for aarch64 emulation, dosfstools to create the virtual file system
+You will need QEMU for aarch64 emulation, dosfstools to create the virtual file system, fusefat to mount the virtual file system without root privileges,
 and gcc-aarch64-linux-gnu to compile bash for the image.
 
 ```bash
 # Install QEMU (Ubuntu/Debian), dosfstools and gcc-aarch64-linux-gnu
-sudo apt install qemu-system-aarch64 dosfstools gcc-aarch64-linux-gnu
+sudo apt install qemu-system-aarch64 dosfstools gcc-aarch64-linux-gnu fusefat
 ```
 
 Additionally you will need a version of the [aarch64-none-elf](https://developer.arm.com/Tools%20and%20Software/GNU%20Toolchain) toolchain installed.

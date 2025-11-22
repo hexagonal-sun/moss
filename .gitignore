@@ -1,3 +1,4 @@
 /target
+/build
 .gdb_history
 *.img
