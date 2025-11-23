@@ -283,7 +283,7 @@ impl<T: Fat32Operations> Inode for Fat32DirNode<T> {
         let mut dir_iter = self.streamer.clone();
 
         while let Some(entry) = dir_iter.next_fat32_entry().await? {
-            if entry.name == name {
+            if entry.name.eq_ignore_ascii_case(name) {
                 return match entry.attr.file_type {
                     FileType::File => Ok(Arc::new(Fat32FileNode::new(
                         self.fs.clone(),
