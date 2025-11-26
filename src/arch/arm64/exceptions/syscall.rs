@@ -205,6 +205,7 @@ pub async fn handle_syscall() {
         0x9a => sys_setpgid(arg1 as _, Pgid(arg2 as _)),
         0x9b => sys_getpgid(arg1 as _),
         0xa0 => sys_uname(TUA::from_value(arg1 as _)).await,
+        0xa3 => Err(KernelError::InvalidValue),
         0xa6 => sys_umask(arg1 as _).map_err(|e| match e {}),
         0xa9 => sys_gettimeofday(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0xac => sys_getpid().map_err(|e| match e {}),
