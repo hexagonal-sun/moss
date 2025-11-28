@@ -256,6 +256,7 @@ pub async fn handle_syscall() {
             )
             .await
         }
+        0x125 => Err(KernelError::NotSupported),
         0x1b7 => {
             sys_faccessat2(
                 arg1.into(),
