@@ -30,7 +30,10 @@ use crate::{
     },
     process::{
         clone::sys_clone,
-        creds::{sys_getegid, sys_geteuid, sys_getgid, sys_getresgid, sys_getresuid, sys_getuid},
+        creds::{
+            sys_getegid, sys_geteuid, sys_getgid, sys_getresgid, sys_getresuid, sys_gettid,
+            sys_getuid,
+        },
         exec::sys_execve,
         exit::{sys_exit, sys_exit_group},
         fd_table::{
@@ -52,7 +55,7 @@ use crate::{
             umask::sys_umask,
             wait::sys_wait4,
         },
-        threading::sys_set_tid_address,
+        threading::{sys_set_robust_list, sys_set_tid_address},
     },
     sched::current_task,
 };
@@ -158,6 +161,7 @@ pub async fn handle_syscall() {
         0x5d => sys_exit(arg1 as _),
         0x5e => sys_exit_group(arg1 as _),
         0x60 => sys_set_tid_address(VA::from_value(arg1 as _)).await,
+        0x63 => sys_set_robust_list(TUA::from_value(arg1 as _), arg2 as _).await,
         0x65 => sys_nanosleep(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0x71 => sys_clock_gettime(arg1 as _, TUA::from_value(arg2 as _)).await,
         0x81 => sys_kill(arg1 as _, arg2.into()),
@@ -218,6 +222,7 @@ pub async fn handle_syscall() {
         0xaf => sys_geteuid().map_err(|e| match e {}),
         0xb0 => sys_getgid().map_err(|e| match e {}),
         0xb1 => sys_getegid().map_err(|e| match e {}),
+        0xb2 => sys_gettid().map_err(|e| match e {}),
         0xc6 => Err(KernelError::NotSupported),
         0xd6 => sys_brk(VA::from_value(arg1 as _))
             .await

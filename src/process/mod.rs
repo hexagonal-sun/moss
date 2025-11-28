@@ -1,4 +1,5 @@
 use crate::drivers::timer::Instant;
+use crate::process::threading::RobustListHead;
 use crate::{
     arch::{Arch, ArchImpl},
     fs::DummyInode,
@@ -11,6 +12,7 @@ use alloc::{
 use creds::Credentials;
 use ctx::{Context, UserCtx};
 use fd_table::FileDescriptorTable;
+use libkernel::memory::address::TUA;
 use libkernel::{VirtualMemory, fs::Inode};
 use libkernel::{
     fs::pathbuf::PathBuf,
@@ -128,6 +130,7 @@ pub struct Task {
     pub priority: i8,
     pub last_run: SpinLock<Option<Instant>>,
     pub state: Arc<SpinLock<TaskState>>,
+    pub robust_list: SpinLock<Option<TUA<RobustListHead>>>,
 }
 
 impl Task {
@@ -155,6 +158,7 @@ impl Task {
             pending_signals: SpinLock::new(SigSet::empty()),
             fd_table: Arc::new(SpinLock::new(FileDescriptorTable::new())),
             last_run: SpinLock::new(None),
+            robust_list: SpinLock::new(None),
         }
     }
 
@@ -176,6 +180,7 @@ impl Task {
                 <ArchImpl as Arch>::new_user_context(VA::null(), VA::null()),
             )),
             last_run: SpinLock::new(None),
+            robust_list: SpinLock::new(None),
         }
     }
 

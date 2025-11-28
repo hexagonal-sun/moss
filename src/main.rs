@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![feature(used_with_arg)]
+#![feature(likely_unlikely)]
 use alloc::{
     boxed::Box,
     string::{String, ToString},
