@@ -1,4 +1,5 @@
 use crate::kernel::power::sys_reboot;
+use crate::kernel::rand::sys_getrandom;
 use crate::{
     arch::{Arch, ArchImpl},
     clock::{gettime::sys_clock_gettime, timeofday::sys_gettimeofday},
@@ -265,6 +266,7 @@ pub async fn handle_syscall() {
             )
             .await
         }
+        0x116 => sys_getrandom(TUA::from_value(arg1 as _), arg2 as _, arg3 as _).await,
         0x125 => Err(KernelError::NotSupported),
         0x1b7 => {
             sys_faccessat2(
