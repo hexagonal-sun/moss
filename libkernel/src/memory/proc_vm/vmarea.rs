@@ -196,6 +196,9 @@ impl VMArea {
     /// header to determine the virtual address range, file mapping details, and
     /// memory permissions.
     ///
+    /// Note: If a program header's VA isn't page-aligned this function will
+    /// align it down and addjust the offset and size accordingly.
+    ///
     /// # Arguments
     /// * `f`: A handle to the ELF file's inode.
     /// * `hdr`: The ELF program header (`LOAD` segment) to create the VMA from.
@@ -223,15 +226,18 @@ impl VMArea {
             permissions.write = true;
         }
 
+        let mappable_region = VirtMemoryRegion::new(
+            VA::from_value(hdr.p_vaddr(endian) as usize),
+            hdr.p_memsz(endian) as usize,
+        )
+        .to_mappable_region();
+
         Self {
-            region: VirtMemoryRegion::new(
-                VA::from_value(hdr.p_vaddr(endian) as usize),
-                hdr.p_memsz(endian) as usize,
-            ),
+            region: mappable_region.region(),
             kind: VMAreaKind::File(VMFileMapping {
                 file: f,
-                offset: hdr.p_offset(endian),
-                len: hdr.p_filesz(endian),
+                offset: hdr.p_offset(endian) - mappable_region.offset() as u64,
+                len: hdr.p_filesz(endian) + mappable_region.offset() as u64,
             }),
             permissions,
         }
