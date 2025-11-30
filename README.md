@@ -77,6 +77,9 @@ Additionally you will need a version of the [aarch64-none-elf](https://developer
 #### Any OS
 To install aarch64-none-elf on any os, download the correct release of `aarch64-none-elf` onto your computer, unpack it, then export the `bin` folder to path.
 
+#### macOS
+There is experimental support for macOS in the scripts/mac-experimental folder. The scripts in there are not guaranteed to work for all macOS users and has only been tested on an M4 Apple Silicon MacBook Air.
+
 #### NixOS
 
 Run the following command
