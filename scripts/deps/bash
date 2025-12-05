@@ -14,7 +14,7 @@ if [ ! -d "bash-5.3" ]; then
 fi
 
 pushd "bash-5.3" &>/dev/null || exit 1
-./configure --without-bash-malloc --enable-static-link --host="aarch64-linux-$stdlib"
+CFLAGS_FOR_BUILD="-std=c99" ./configure --without-bash-malloc --enable-static-link --host="aarch64-linux-$stdlib"
 make clean
 make
 mv bash ../bin/bash
