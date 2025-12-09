@@ -28,10 +28,12 @@ pub mod null;
 pub mod probe;
 pub mod timer;
 pub mod uart;
+pub mod zero;
 
 #[repr(u64)]
 pub enum ReservedMajors {
     Null = 1,
+    Zero = 2,
     Console = 5,
     Uart = 10,
     End = 11,
