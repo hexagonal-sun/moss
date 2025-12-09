@@ -72,6 +72,25 @@ fn test_fork() {
     println!(" OK");
 }
 
+fn test_write() {
+    print!("Testing write syscall ...");
+    let file = "/dev/null";
+    let c_file = std::ffi::CString::new(file).unwrap();
+    let data = b"Hello, world!";
+    unsafe {
+        let fd = libc::open(c_file.as_ptr(), libc::O_WRONLY);
+        if fd < 0 {
+            panic!("open failed");
+        }
+        let ret = libc::write(fd, data.as_ptr() as *const libc::c_void, data.len());
+        if ret < 0 || ret as usize != data.len() {
+            panic!("write failed");
+        }
+        libc::close(fd);
+    }
+    println!(" OK");
+}
+
 fn run_test(test_fn: fn()) {
     // Fork a new process to run the test
     unsafe {
@@ -102,6 +121,7 @@ fn main() {
     run_test(test_readdir);
     run_test(test_chdir);
     run_test(test_fork);
+    run_test(test_write);
     let end = std::time::Instant::now();
     println!("All tests passed in {} ms", (end - start).as_millis());
 }
