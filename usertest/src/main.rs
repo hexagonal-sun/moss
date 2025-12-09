@@ -115,7 +115,6 @@ fn run_test(test_fn: fn()) {
 fn main() {
     println!("Running userspace tests ...");
     let start = std::time::Instant::now();
-    // TODO: make tests their own process later
     run_test(test_sync);
     run_test(test_opendir);
     run_test(test_readdir);
