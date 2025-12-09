@@ -124,4 +124,3 @@ fn main() {
     let end = std::time::Instant::now();
     println!("All tests passed in {} ms", (end - start).as_millis());
 }
-
