@@ -72,6 +72,26 @@ fn test_fork() {
     println!(" OK");
 }
 
+fn test_read() {
+    print!("Testing read syscall ...");
+    let file = "/dev/zero";
+    let c_file = std::ffi::CString::new(file).unwrap();
+    let mut buffer = [0u8; 16];
+    unsafe {
+        let fd = libc::open(c_file.as_ptr(), libc::O_RDONLY);
+        if fd < 0 {
+            panic!("open failed");
+        }
+        let ret = libc::read(fd, buffer.as_mut_ptr() as *mut libc::c_void, buffer.len());
+        if ret < 0 || ret as usize != buffer.len() {
+            panic!("read failed");
+        }
+        libc::close(fd);
+        assert!(buffer.iter().take(ret as usize).all(|&b| b == 0));
+    }
+    println!(" OK");
+}
+
 fn test_write() {
     print!("Testing write syscall ...");
     let file = "/dev/null";
@@ -120,6 +140,7 @@ fn main() {
     run_test(test_readdir);
     run_test(test_chdir);
     run_test(test_fork);
+    run_test(test_read);
     run_test(test_write);
     let end = std::time::Instant::now();
     println!("All tests passed in {} ms", (end - start).as_millis());
