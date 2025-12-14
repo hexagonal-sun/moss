@@ -111,6 +111,74 @@ fn test_write() {
     println!(" OK");
 }
 
+fn test_futex() {
+    print!("Testing futex syscall ...");
+    let mut futex_word: libc::c_uint = 0;
+    let addr = &mut futex_word as *mut libc::c_uint;
+    unsafe {
+        // FUTEX_WAKE should succeed (no waiters, returns 0)
+        let ret = libc::syscall(
+            libc::SYS_futex,
+            addr,
+            libc::FUTEX_WAKE,
+            1,
+            std::ptr::null::<libc::c_void>(),
+            std::ptr::null::<libc::c_void>(),
+            0,
+        );
+        if ret < 0 {
+            panic!("futex wake failed");
+        }
+
+        // FUTEX_WAIT with an *unexpected* value (1) should fail immediately and
+        // return -1 with errno = EAGAIN.  We just check the return value here
+        // to avoid blocking the test.
+        let ret2 = libc::syscall(
+            libc::SYS_futex,
+            addr,
+            libc::FUTEX_WAIT,
+            1u32, // expected value differs from actual (0)
+            std::ptr::null::<libc::c_void>(),
+            std::ptr::null::<libc::c_void>(),
+            0,
+        );
+        if ret2 != -1 {
+            panic!("futex wait did not error out as expected");
+        }
+    }
+    println!(" OK");
+}
+
+fn test_rust_mutex() {
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+
+    print!("Testing Rust Mutex ...");
+    let mutex = Arc::new(Mutex::new(0));
+    let mut handles = vec![];
+
+    for _ in 0..10 {
+        let mtx_clone = Arc::clone(&mutex);
+        let handle = thread::spawn(move || {
+            for _ in 0..1000 {
+                let mut num = mtx_clone.lock().unwrap();
+                *num += 1;
+            }
+        });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    let final_count = *mutex.lock().unwrap();
+    if final_count != 10_000 {
+        panic!("Mutex test failed, expected 10000 but got {}", final_count);
+    }
+    println!(" OK");
+}
+
 fn test_rust_file() {
     print!("Testing rust file operations ...");
     use std::fs::{self, File};
@@ -176,6 +244,8 @@ fn main() {
     run_test(test_fork);
     run_test(test_read);
     run_test(test_write);
+    run_test(test_futex);
+    run_test(test_rust_mutex);
     run_test(test_rust_file);
     run_test(test_rust_dir);
     let end = std::time::Instant::now();
