@@ -12,7 +12,7 @@ pub async fn sys_reboot(magic: u32, magic2: u32, op: u32, _arg: usize) -> Result
     // const LINUX_REBOOT_CMD_HALT: u32 = 0xcdef_0123;
     // const LINUX_REBOOT_CMD_KEXEC: u32 = 0x4558_4543;
     const LINUX_REBOOT_CMD_POWER_OFF: u32 = 0x4321_fedc;
-    // const LINUX_REBOOT_CMD_RESTART: u32 = 0x0123_4567;
+    const LINUX_REBOOT_CMD_RESTART: u32 = 0x0123_4567;
     // const LINUX_REBOOT_CMD_RESTART2: u32 = 0xa1b2_c3d4;
     // const LINUX_REBOOT_CMD_SW_SUSPEND: u32 = 0xd000_fce1;
     if magic != LINUX_REBOOT_MAGIC1
@@ -28,6 +28,7 @@ pub async fn sys_reboot(magic: u32, magic2: u32, op: u32, _arg: usize) -> Result
             // User is supposed to sync first.
             ArchImpl::power_off()
         }
+        LINUX_REBOOT_CMD_RESTART => ArchImpl::restart(),
         // TODO: Implement other reboot operations.
         _ => Err(KernelError::InvalidValue),
     }

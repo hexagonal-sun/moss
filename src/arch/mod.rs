@@ -42,6 +42,9 @@ pub trait Arch: CpuOps + VirtualMemory {
     /// Powers off the machine. Implementations must never return.
     fn power_off() -> !;
 
+    /// Restarts the machine. Implementations must never return.
+    fn restart() -> !;
+
     /// Call a user-specified signal handler in the current process.
     fn do_signal(
         sig: SigId,

@@ -121,6 +121,16 @@ impl Arch for Aarch64 {
         Self::halt()
     }
 
+    fn restart() -> ! {
+        const PSCI_SYSTEM_RESET: u32 = 0x8400_0009;
+        unsafe {
+            psci::do_psci_hyp_call(PSCI_SYSTEM_RESET, 0, 0, 0);
+        }
+
+        // Fallback: halt the CPU indefinitely.
+        Self::halt()
+    }
+
     unsafe fn copy_from_user(
         src: UA,
         dst: *mut (),
