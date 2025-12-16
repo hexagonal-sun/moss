@@ -76,7 +76,7 @@ fn test_read() {
     print!("Testing read syscall ...");
     let file = "/dev/zero";
     let c_file = std::ffi::CString::new(file).unwrap();
-    let mut buffer = [0u8; 16];
+    let mut buffer = [1u8; 16];
     unsafe {
         let fd = libc::open(c_file.as_ptr(), libc::O_RDONLY);
         if fd < 0 {
