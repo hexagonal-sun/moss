@@ -215,7 +215,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
 
                             for thr_weak in process.threads.lock_save_irq().values() {
                                 if let Some(thr) = thr_weak.upgrade() {
-                                    *thr.state.lock_save_irq() = TaskState::Sleeping;
+                                    *thr.state.lock_save_irq() = TaskState::Stopped;
                                 }
                             }
 

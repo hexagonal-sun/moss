@@ -106,6 +106,7 @@ impl TaskDescriptor {
 pub enum TaskState {
     Running,
     Runnable,
+    Stopped,
     Sleeping,
     Finished,
 }
