@@ -11,6 +11,7 @@ mkfs.vfat -F 32 "$img"
 
 mmd -i "$img" ::/bin
 mmd -i "$img" ::/dev
+mmd -i "$img" ::/tmp
 
 mcopy -i "$img" "$base/build/bin"/* "::/bin"
 
