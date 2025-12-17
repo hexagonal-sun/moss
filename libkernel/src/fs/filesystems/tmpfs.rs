@@ -257,7 +257,7 @@ where
             // Free the excess blocks from the end
             while inner.allocated_blocks > new_blk_count {
                 let release_idx = inner.allocated_blocks - 1;
-                
+
                 unsafe {
                     let ptr_slot = inner.block_slot_ptr(release_idx);
                     let ptr = *ptr_slot;
@@ -268,13 +268,13 @@ where
                             VA::from_ptr_mut(ptr.cast()).to_pa::<T>().to_pfn(),
                         );
 
-                        drop(page); 
+                        drop(page);
 
                         // Null the slot to prevent double-free in Drop
                         *ptr_slot = core::ptr::null_mut();
                     }
                 }
-                
+
                 inner.allocated_blocks -= 1;
             }
 
@@ -512,7 +512,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::{InodeId, FileType, attr::FilePermissions};
+    use crate::fs::{FileType, InodeId, attr::FilePermissions};
     use crate::memory::{
         PAGE_SIZE,
         address::IdentityTranslator,
@@ -578,10 +578,10 @@ mod tests {
     #[tokio::test]
     async fn test_write_across_page_boundary() {
         let (_, reg) = setup_env();
-        
+
         let data_len = 5000;
         let data: Vec<u8> = (0..data_len).map(|i| (i % 255) as u8).collect();
-        
+
         let written = reg.write_at(0, &data).await.expect("Write failed");
         assert_eq!(written, data_len);
 
@@ -615,7 +615,7 @@ mod tests {
     #[tokio::test]
     async fn test_write_append() {
         let (_, reg) = setup_env();
-        
+
         reg.write_at(0, b"Hello").await.unwrap();
         reg.write_at(5, b" World").await.unwrap();
 
@@ -627,7 +627,7 @@ mod tests {
     #[tokio::test]
     async fn test_write_out_of_bounds() {
         let (_, reg) = setup_env();
-        
+
         let max_sz = (PAGE_SIZE * (PAGE_SIZE / 8)) as u64;
 
         let res = reg.write_at(max_sz, b"X").await;
@@ -638,9 +638,9 @@ mod tests {
     #[tokio::test]
     async fn test_truncate() {
         let (_, reg) = setup_env();
-        
+
         reg.write_at(0, b"1234567890").await.unwrap();
-        
+
         reg.truncate(5).await.expect("Truncate down failed");
         let attr = reg.getattr().await.unwrap();
         assert_eq!(attr.size, 5);
@@ -654,7 +654,7 @@ mod tests {
         assert_eq!(read, 10);
         // "12345" + 5 zeros
         assert_eq!(&buf[..5], b"12345");
-        assert_eq!(&buf[5..], &[0,0,0,0,0]);
+        assert_eq!(&buf[5..], &[0, 0, 0, 0, 0]);
     }
 
     #[tokio::test]
@@ -663,11 +663,14 @@ mod tests {
         let root = fs.root_inode().await.unwrap();
 
         // Create a file
-        let file_inode = root.create(
-            "test_file.txt", 
-            FileType::File, 
-            FilePermissions::from_bits_retain(0),
-        ).await.expect("Create failed");
+        let file_inode = root
+            .create(
+                "test_file.txt",
+                FileType::File,
+                FilePermissions::from_bits_retain(0),
+            )
+            .await
+            .expect("Create failed");
 
         // Lookup
         let found = root.lookup("test_file.txt").await.expect("Lookup failed");
@@ -683,9 +686,13 @@ mod tests {
         let fs = setup_fs();
         let root = fs.root_inode().await.unwrap();
 
-        root.create("dup", FileType::File, FilePermissions::from_bits_retain(0)).await.unwrap();
-        
-        let res = root.create("dup", FileType::File, FilePermissions::empty()).await;
+        root.create("dup", FileType::File, FilePermissions::from_bits_retain(0))
+            .await
+            .unwrap();
+
+        let res = root
+            .create("dup", FileType::File, FilePermissions::empty())
+            .await;
         assert!(res.is_err(), "Should not allow duplicate file creation");
     }
 
@@ -695,12 +702,16 @@ mod tests {
         let root = fs.root_inode().await.unwrap();
 
         // Create /subdir
-        let subdir = root.create("subdir", FileType::Directory, FilePermissions::empty())
-            .await.unwrap();
+        let subdir = root
+            .create("subdir", FileType::Directory, FilePermissions::empty())
+            .await
+            .unwrap();
 
         // Create /subdir/inner
-        let inner = subdir.create("inner", FileType::File, FilePermissions::empty())
-            .await.unwrap();
+        let inner = subdir
+            .create("inner", FileType::File, FilePermissions::empty())
+            .await
+            .unwrap();
 
         // Verify hierarchy
         let found_subdir = root.lookup("subdir").await.unwrap();
@@ -714,9 +725,15 @@ mod tests {
         let root = fs.root_inode().await.unwrap();
 
         // Create files in "random" order
-        root.create("c.txt", FileType::File, FilePermissions::empty()).await.unwrap();
-        root.create("a.txt", FileType::File, FilePermissions::empty()).await.unwrap();
-        root.create("b.dir", FileType::Directory, FilePermissions::empty()).await.unwrap();
+        root.create("c.txt", FileType::File, FilePermissions::empty())
+            .await
+            .unwrap();
+        root.create("a.txt", FileType::File, FilePermissions::empty())
+            .await
+            .unwrap();
+        root.create("b.dir", FileType::Directory, FilePermissions::empty())
+            .await
+            .unwrap();
 
         let mut dir_stream = root.readdir(0).await.expect("Readdir failed");
 
@@ -725,7 +742,7 @@ mod tests {
             names.push(dent.name);
         }
 
-        // We don't guarantee order in the current implementation (it's a Vec push), 
+        // We don't guarantee order in the current implementation (it's a Vec push),
         // but let's verify existence.
         assert!(names.contains(&"a.txt".to_string()));
         assert!(names.contains(&"b.dir".to_string()));
@@ -738,8 +755,14 @@ mod tests {
         let fs = setup_fs();
         let root = fs.root_inode().await.unwrap();
 
-        let f1 = root.create("f1", FileType::File, FilePermissions::empty()).await.unwrap();
-        let f2 = root.create("f2", FileType::File, FilePermissions::empty()).await.unwrap();
+        let f1 = root
+            .create("f1", FileType::File, FilePermissions::empty())
+            .await
+            .unwrap();
+        let f2 = root
+            .create("f2", FileType::File, FilePermissions::empty())
+            .await
+            .unwrap();
 
         assert_ne!(f1.id(), f2.id());
         assert_ne!(f1.id(), root.id());
