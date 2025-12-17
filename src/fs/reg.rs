@@ -67,26 +67,28 @@ impl FileOps for RegFile {
     async fn write(&mut self, ctx: &mut FileCtx, mut buf: UA, mut count: usize) -> Result<usize> {
         let mut pg = ClaimedPage::alloc_zeroed()?;
         let kbuf = pg.as_slice_mut();
-        let mut total_bytes_read = 0;
+        let mut total_bytes_written = 0;
 
         while count > 0 {
             let chunk_sz = min(PAGE_SIZE, count);
 
-            let bytes_read = self.inode.read_at(ctx.pos, &mut kbuf[..chunk_sz]).await?;
+            copy_from_user_slice(buf, &mut kbuf[..chunk_sz]).await?;
 
-            if bytes_read == 0 {
-                return Ok(total_bytes_read);
+            let bytes_written = self.inode.write_at(ctx.pos, &kbuf[..chunk_sz]).await?;
+
+            // If we wrote 0 bytes, the disk might be full or the file cannot be
+            // extended.
+            if bytes_written == 0 {
+                break;
             }
 
-            copy_to_user_slice(&kbuf[..bytes_read], buf).await?;
-
-            ctx.pos += bytes_read as u64;
-            total_bytes_read += bytes_read;
-            count -= bytes_read;
-            buf = buf.add_bytes(bytes_read);
+            ctx.pos += bytes_written as u64;
+            total_bytes_written += bytes_written;
+            count -= bytes_written;
+            buf = buf.add_bytes(bytes_written);
         }
 
-        Ok(total_bytes_read)
+        Ok(total_bytes_written)
     }
 
     fn poll_read_ready(&self) -> Pin<Box<dyn Future<Output = Result<()>> + 'static + Send>> {
