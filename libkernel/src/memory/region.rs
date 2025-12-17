@@ -372,6 +372,16 @@ impl<T: MemKind> MemoryRegion<T> {
             }
         })
     }
+}
+
+/// A memory region in physical address space.
+pub type PhysMemoryRegion = MemoryRegion<Physical>;
+
+impl PhysMemoryRegion {
+    /// Map the physical region to virtual space using a translator.
+    pub fn map_via<T: AddressTranslator<()>>(self) -> VirtMemoryRegion {
+        VirtMemoryRegion::new(self.address.to_va::<T>(), self.size)
+    }
 
     pub fn iter_pfns(self) -> impl Iterator<Item = PageFrame> {
         let mut count = 0;
@@ -388,16 +398,6 @@ impl<T: MemKind> MemoryRegion<T> {
                 None
             }
         })
-    }
-}
-
-/// A memory region in physical address space.
-pub type PhysMemoryRegion = MemoryRegion<Physical>;
-
-impl PhysMemoryRegion {
-    /// Map the physical region to virtual space using a translator.
-    pub fn map_via<T: AddressTranslator<()>>(self) -> VirtMemoryRegion {
-        VirtMemoryRegion::new(self.address.to_va::<T>(), self.size)
     }
 }
 

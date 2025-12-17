@@ -79,8 +79,10 @@ impl<A: CpuOps, G: PageAllocGetter<A>, T: AddressTranslator<()>> ClaimedPage<A, 
 
     /// Takes ownership of the page at pfn.
     ///
-    /// SAFETY: Ensure that the calling context does indeed own this page.
-    /// Otherwise, the page may be free'd when it's owned by another context.
+    /// # Safety
+    /// 
+    /// Ensure that the calling context does indeed own this page. Otherwise,
+    /// the page may be free'd when it's owned by another context.
     pub unsafe fn from_pfn(pfn: PageFrame) -> Self {
         Self(
             unsafe {

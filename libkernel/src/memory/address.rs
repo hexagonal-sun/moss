@@ -164,10 +164,6 @@ impl<K: MemKind, T> Address<K, T> {
     pub fn is_null(self) -> bool {
         self.inner == 0
     }
-
-    pub fn to_pfn(&self) -> PageFrame {
-        PageFrame::from_pfn(self.inner >> PAGE_SHIFT)
-    }
 }
 
 impl<K: MemKind, T: Sized> Address<K, T> {
@@ -293,6 +289,10 @@ impl PA {
     /// Cast to a typed physical address.
     pub fn cast<T>(self) -> TPA<T> {
         TPA::from_value(self.value())
+    }
+
+    pub fn to_pfn(&self) -> PageFrame {
+        PageFrame::from_pfn(self.inner >> PAGE_SHIFT)
     }
 }
 
