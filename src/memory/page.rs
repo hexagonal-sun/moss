@@ -13,4 +13,5 @@ impl PageAllocGetter<ArchImpl> for PgAllocGetter {
     }
 }
 
-pub type ClaimedPage = libkernel::memory::page::ClaimedPage<ArchImpl, PgAllocGetter, PageOffsetTranslator>;
+pub type ClaimedPage =
+    libkernel::memory::page::ClaimedPage<ArchImpl, PgAllocGetter, PageOffsetTranslator>;

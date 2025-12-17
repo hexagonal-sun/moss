@@ -1,4 +1,9 @@
-use crate::{arch::ArchImpl, drivers::Driver, fs::FilesystemDriver, memory::{PageOffsetTranslator, page::PgAllocGetter}};
+use crate::{
+    arch::ArchImpl,
+    drivers::Driver,
+    fs::FilesystemDriver,
+    memory::{PageOffsetTranslator, page::PgAllocGetter},
+};
 use alloc::{boxed::Box, sync::Arc};
 use async_trait::async_trait;
 use libkernel::{
