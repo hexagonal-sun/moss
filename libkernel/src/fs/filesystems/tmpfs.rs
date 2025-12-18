@@ -429,6 +429,18 @@ where
 
         Ok(inode)
     }
+
+    async fn unlink(&self, name: &str) -> Result<()> {
+        let mut entries = self.entries.lock_save_irq();
+        let index = entries.iter().position(|e| e.name == name);
+
+        if let Some(idx) = index {
+            entries.remove(idx);
+            Ok(())
+        } else {
+            Err(FsError::NotFound.into())
+        }
+    }
 }
 
 impl<C, G, T> TmpFsDirInode<C, G, T>

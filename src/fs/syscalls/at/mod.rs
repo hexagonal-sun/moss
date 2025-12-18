@@ -6,9 +6,11 @@ use libkernel::{
 };
 
 pub mod access;
+pub mod mkdir;
 pub mod open;
 pub mod readlink;
 pub mod stat;
+pub mod unlink;
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]

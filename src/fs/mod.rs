@@ -238,11 +238,15 @@ impl VFS {
             Err(KernelError::Fs(FsError::NotFound)) => {
                 // If O_CREAT is specified, we should create it.
                 if flags.contains(OpenFlags::O_CREAT) {
-                    // Resolve its parent directory.
-                    let parent_path = path.parent().ok_or(FsError::InvalidInput)?;
+                    // Determine the target name and parent directory. If the path has no
+                    // explicit parent component (e.g., "foo"), use the provided `root`
+                    // (cwd or dirfd) as the parent directory.
                     let file_name = path.file_name().ok_or(FsError::InvalidInput)?;
-
-                    let parent_inode = self.resolve_path(parent_path, root).await?;
+                    let parent_inode = if let Some(parent_path) = path.parent() {
+                        self.resolve_path(parent_path, root.clone()).await?
+                    } else {
+                        root.clone()
+                    };
 
                     // Ensure the parent is actually a directory before creating a
                     // file in it.
@@ -313,6 +317,87 @@ impl VFS {
             FileType::Fifo => todo!(),
             FileType::Socket => todo!(),
         }
+    }
+
+    pub async fn mkdir(
+        &self,
+        path: &Path,
+        root: Arc<dyn Inode>,
+        mode: FilePermissions,
+    ) -> Result<()> {
+        // Try to resolve the target directory first.
+        match self.resolve_path(path, root.clone()).await {
+            // The path already exists, this is an error.
+            Ok(_) => Err(FsError::AlreadyExists.into()),
+
+            // The path does not exist, we need to create it.
+            Err(KernelError::Fs(FsError::NotFound)) => {
+                // Determine the new directory name.
+                let dir_name = path.file_name().ok_or(FsError::InvalidInput)?;
+
+                // Resolve the parent directory.  If the path has no parent
+                // component (e.g., \"foo\"), treat the provided `root`
+                // directory (AT_FDCWD / cwd / dirfd) as the parent.
+                let parent_inode = if let Some(parent_path) = path.parent() {
+                    self.resolve_path(parent_path, root.clone()).await?
+                } else {
+                    root.clone()
+                };
+
+                // Verify that the parent is actually a directory.
+                if parent_inode.getattr().await?.file_type != FileType::Directory {
+                    return Err(FsError::NotADirectory.into());
+                }
+
+                // Delegate the creation to the filesystem-specific inode.
+                parent_inode
+                    .create(dir_name, FileType::Directory, mode)
+                    .await?;
+
+                Ok(())
+            }
+
+            // Propagate any other errors up the stack.
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn unlink(&self, path: &Path, root: Arc<dyn Inode>, remove_dir: bool) -> Result<()> {
+        // First, resolve the target inode so we can inspect its type.
+        let target_inode = self.resolve_path(path, root.clone()).await?;
+
+        let attr = target_inode.getattr().await?;
+
+        // Validate flag and file-type combinations.
+        match attr.file_type {
+            FileType::Directory if !remove_dir => {
+                return Err(FsError::IsADirectory.into());
+            }
+            FileType::Directory => { /* OK: rmdir semantics */ }
+            _ if remove_dir => {
+                return Err(FsError::NotADirectory.into());
+            }
+            _ => { /* Regular unlink */ }
+        }
+
+        // Determine the parent directory inode in which to perform the unlink.
+        let parent_inode = if let Some(parent_path) = path.parent() {
+            self.resolve_path(parent_path, root.clone()).await?
+        } else {
+            root.clone()
+        };
+
+        // Ensure the parent really is a directory.
+        if parent_inode.getattr().await?.file_type != FileType::Directory {
+            return Err(FsError::NotADirectory.into());
+        }
+
+        // Extract the final component (name) and perform the unlink on the parent.
+        let name = path.file_name().ok_or(FsError::InvalidInput)?;
+
+        parent_inode.unlink(name).await?;
+
+        Ok(())
     }
 }
 
