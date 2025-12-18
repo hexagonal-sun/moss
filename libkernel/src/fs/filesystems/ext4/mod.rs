@@ -29,6 +29,9 @@ use alloc::{
 use async_trait::async_trait;
 
 pub const EXT4_NAME_LEN: usize = 255;
+pub const BLOCK_SIZE: usize = 0x1000;                // 4KB
+pub const SECTORS_PER_BLOCK: usize = BLOCK_SIZE / 512;
+
 
 /// An EXT4 filesystem instance.
 ///
