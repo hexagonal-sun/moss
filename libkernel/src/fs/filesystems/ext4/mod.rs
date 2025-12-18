@@ -36,7 +36,7 @@ pub const EXT4_NAME_LEN: usize = 255;
 /// assigned by the VFS when the filesystem is mounted.
 pub struct Ext4Filesystem {
     dev: BlockBuffer,
-    superblock: Ext4SuperBlock,
+    pub superblock: Ext4SuperBlock,
     id: u64,
     this: Weak<Self>,
 }
@@ -112,23 +112,43 @@ impl Ext4Filesystem {
     }
 }
 
-/// A placeholder directory inode that represents `"/"` on an EXT4 volume.
-///
-/// Every method returns `KernelError::NotSupported`; it only exists so that
-/// `Ext4Filesystem::root_inode()` has something concrete to hand back.
-struct Ext4RootInode {
-    fs: Weak<Ext4Filesystem>,
-    attr: FileAttr,
+pub struct ExtInode {
+    pub fs: Weak<Ext4Filesystem>,
+    pub inode: Ext4Inode,
+    pub attr: FileAttr
 }
 
-impl Ext4RootInode {
-    fn new(fs: Weak<Ext4Filesystem>, attr: FileAttr) -> Self {
-        Self { fs, attr }
+impl ExtInode {
+    fn new(fs: Weak<Ext4Filesystem>, inode: Ext4Inode, id: InodeId) -> Self {
+        let size = ((inode.size_high as u64) << 32) | inode.size_lo as u64;
+
+        let mode_bits = inode.mode;
+        let file_type = match mode_bits & 0xF000 {
+            0x4000 => FileType::Directory,
+            0x8000 => FileType::File,
+            0xA000 => FileType::Symlink,
+            _ => FileType::File,
+        };
+        let permissions = FilePermissions::from_bits_truncate((mode_bits & 0o777) as u16);
+        let uid = Uid::new(inode.uid as u32);
+        let gid = Gid::new(inode.gid as u32);
+
+        let attr = FileAttr {
+            id,
+            file_type,
+            mode: permissions,
+            uid,
+            gid,
+            size,
+            nlinks: inode.links_count as u32,
+            ..FileAttr::default()
+        };
+        Self { fs, inode, attr }
     }
 }
 
 #[async_trait]
-impl Inode for Ext4RootInode {
+impl Inode for ExtInode {
     fn id(&self) -> InodeId {
         self.attr.id
     }
@@ -182,31 +202,8 @@ impl Filesystem for Ext4Filesystem {
     /// At present this is a dummy inode that only supports `getattr`.
     async fn root_inode(&self) -> Result<Arc<dyn Inode>> {
         let dinode = self.read_inode(2).await?;
-        let size = ((dinode.size_high as u64) << 32) | dinode.size_lo as u64;
-
-        let mode_bits = dinode.mode;
-        let file_type = match mode_bits & 0xF000 {
-            0x4000 => FileType::Directory,
-            0x8000 => FileType::File,
-            0xA000 => FileType::Symlink,
-            _ => FileType::File,
-        };
-        let permissions = FilePermissions::from_bits_truncate((mode_bits & 0o777) as u16);
-        let uid = Uid::new(dinode.uid as u32);
-        let gid = Gid::new(dinode.gid as u32);
-
-        let attr = FileAttr {
-            id: InodeId::from_fsid_and_inodeid(self.id, 2),
-            file_type,
-            mode: permissions,
-            uid,
-            gid,
-            size,
-            nlinks: dinode.links_count as u32,
-            ..FileAttr::default()
-        };
-
-        Ok(Arc::new(Ext4RootInode::new(self.this.clone(), attr)))
+        let id = InodeId::from_fsid_and_inodeid(self.id, 2);
+        Ok(Arc::new(ExtInode::new(self.this.clone(), dinode, id)))
     }
 
     /// Flushes any dirty data to the underlying block device.  The current
@@ -280,5 +277,15 @@ mod tests {
         let desc = fs.read_group_desc(0).await.expect("group desc");
         // The inode table block for group 0 must be non-zero in a valid image.
         assert!(desc.inode_table_lo != 0 || desc.inode_table_hi != 0);
+    }
+
+    #[tokio::test]
+    async fn test_read_root() {
+        let blk_buf = BlockBuffer::new(Box::new(MemBlkDevice { data: IMG }));
+        let fs = Ext4Filesystem::new(blk_buf, 1).await.expect("mount");
+        let root_inode = fs.read_inode(2).await.expect("read root inode");
+        let id = InodeId::from_fsid_and_inodeid(1, 2);
+        let inode = ExtInode::new(fs.this.clone(), root_inode, id);
+        assert!(dir_entry::is_dx_dir(&inode));
     }
 }

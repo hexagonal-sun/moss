@@ -1,3 +1,4 @@
+use bitflags::bitflags;
 // From: https://github.com/torvalds/linux/blob/8f0b4cce4481fb22653697cced8d0d04027cb1e8/fs/ext4/ext4.h#L1345
 use crate::pod::Pod;
 #[repr(C)]
@@ -219,6 +220,51 @@ pub struct Ext4SuperBlock {
     pub reserved: [u32; 93],
     /// crc32c(superblock)
     pub checksum: u32,
+}
+
+bitflags! {
+    pub struct SuperBlockFeatureCompat: u32 {
+        const DIR_PREALLOC = 0x0001;
+        const IMAGIC_INODES = 0x0002;
+        const HAS_JOURNAL = 0x0004;
+        const EXT_ATTR = 0x0008;
+        const RESIZE_INODE = 0x0010;
+        const DIR_INDEX = 0x0020;
+        const LAZY_BG = 0x0040;
+        const EXCLUDE_INODE = 0x0080;
+        const EXCLUDE_BITMAP = 0x0100;
+        const SPARSE_SUPER2 = 0x0200;
+        const FAST_COMMIT = 0x0400;
+        const ORPHAN_FILE = 0x1000;
+    }
+}
+
+bitflags! {
+    pub struct SuperBlockFeatureIncompat: u32 {
+        const COMPRESSION = 0x0001;
+        const FILETYPE = 0x0002;
+        const RECOVER = 0x0004;
+        const JOURNAL_DEV = 0x0008;
+        const META_BG = 0x0010;
+        const EXTENTS = 0x0040;
+        const SIXTY_FOUR_BIT = 0x0080;
+        const MMP = 0x0100;
+        const FLEX_BG = 0x0200;
+        const EA_INODE = 0x0400;
+        const DIRDATA = 0x1000;
+        const CSUM_SEED = 0x2000;
+        const LARGEDIR = 0x4000;
+        const INLINE_DATA = 0x8000;
+        const ENCRYPT = 0x10000;
+        const CASEFOLD = 0x20000;
+    }
+}
+
+impl Ext4SuperBlock {
+    pub fn has_feature_dir_index(&self) -> bool {
+        let features = SuperBlockFeatureCompat::from_bits_truncate(self.feature_compat);
+        features.contains(SuperBlockFeatureCompat::DIR_INDEX)
+    }
 }
 
 unsafe impl Pod for Ext4SuperBlock {}
