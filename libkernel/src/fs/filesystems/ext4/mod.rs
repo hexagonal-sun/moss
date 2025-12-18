@@ -4,10 +4,12 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 
+mod dir;
+mod dir_entry;
 mod group;
 mod inode;
+mod iters;
 mod superblock;
-mod dir_entry;
 
 use group::Ext4BlockGroupDescriptor;
 use inode::Ext4Inode;
@@ -27,6 +29,10 @@ use alloc::{
     sync::{Arc, Weak},
 };
 use async_trait::async_trait;
+use crate::error::FsError;
+use crate::fs::{DirStream, Dirent};
+use crate::fs::filesystems::ext4::inode::{Ext4InodeFlags, Ext4InodeMode};
+use crate::fs::pathbuf::PathBuf;
 
 pub const EXT4_NAME_LEN: usize = 255;
 pub const BLOCK_SIZE: usize = 0x1000;                // 4KB
@@ -117,6 +123,8 @@ impl Ext4Filesystem {
 
 pub struct ExtInode {
     pub fs: Weak<Ext4Filesystem>,
+    /// Actual on-disk inode id.
+    pub id: u64,
     pub inode: Ext4Inode,
     pub attr: FileAttr
 }
@@ -126,13 +134,19 @@ impl ExtInode {
         let size = ((inode.size_high as u64) << 32) | inode.size_lo as u64;
 
         let mode_bits = inode.mode;
-        let file_type = match mode_bits & 0xF000 {
-            0x4000 => FileType::Directory,
-            0x8000 => FileType::File,
-            0xA000 => FileType::Symlink,
-            _ => FileType::File,
+        let file_type = if mode_bits.contains(Ext4InodeMode::IFDIR) {
+            FileType::Directory
+        } else if mode_bits.contains(Ext4InodeMode::IFREG) {
+            FileType::File
+        } else if mode_bits.contains(Ext4InodeMode::IFLNK) {
+            FileType::Symlink
+        } else if mode_bits.contains(Ext4InodeMode::IFSOCK) {
+            FileType::Socket
+        } else {
+            // TODO: handle other types
+            panic!("Unknown inode file type");
         };
-        let permissions = FilePermissions::from_bits_truncate((mode_bits & 0o777) as u16);
+        let permissions = FilePermissions::from_bits_truncate(mode_bits.bits() & 0o777);
         let uid = Uid::new(inode.uid as u32);
         let gid = Gid::new(inode.gid as u32);
 
@@ -146,7 +160,12 @@ impl ExtInode {
             nlinks: inode.links_count as u32,
             ..FileAttr::default()
         };
-        Self { fs, inode, attr }
+        Self {
+            fs,
+            id: id.inode_id(),
+            inode,
+            attr
+        }
     }
 }
 
@@ -154,10 +173,6 @@ impl ExtInode {
 impl Inode for ExtInode {
     fn id(&self) -> InodeId {
         self.attr.id
-    }
-
-    async fn getattr(&self) -> Result<FileAttr> {
-        Ok(self.attr.clone())
     }
 
     async fn read_at(&self, _offset: u64, _buf: &mut [u8]) -> Result<usize> {
@@ -172,15 +187,40 @@ impl Inode for ExtInode {
         Err(KernelError::NotSupported)
     }
 
-    async fn lookup(&self, _name: &str) -> Result<Arc<dyn Inode>> {
-        Err(KernelError::NotSupported)
+    async fn getattr(&self) -> Result<FileAttr> {
+        Ok(self.attr.clone())
+    }
+
+    async fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
+        let fs = self.fs.upgrade().unwrap();
+        if !self.inode.is_dir() {
+            return Err(KernelError::Fs(FsError::NotADirectory));
+        }
+        if self.inode.flags.contains(Ext4InodeFlags::INDEX) {
+            // let entry = get_dir_entry_via_htree(fs, &self, name)?;
+            // return fs.read_inode(entry.inode).await.map(|inode| {
+            //     Arc::new(inode)
+            // });
+        }
+        let path = PathBuf::new();
+
+        // for entry in ReadDir::new(fs.clone(), &self, path)? {
+        //     let entry = entry?;
+        //     if entry.file_name() == name {
+        //         return fs.read_inode(entry.inode).await.map(|inode| {
+        //             Arc::new(inode)
+        //         });
+        //     }
+        // }
+
+        Err(KernelError::Fs(FsError::NotFound))
     }
 
     async fn create(
         &self,
         _name: &str,
         _file_type: FileType,
-        _permissions: u16,
+        _permissions: FilePermissions,
     ) -> Result<Arc<dyn Inode>> {
         Err(KernelError::NotSupported)
     }
@@ -189,8 +229,12 @@ impl Inode for ExtInode {
         Err(KernelError::NotSupported)
     }
 
-    async fn readdir(&self, _start_offset: u64) -> Result<Box<dyn crate::fs::DirStream>> {
-        Err(KernelError::NotSupported)
+    async fn readdir(&self, start_offset: u64) -> Result<Box<dyn DirStream>> {
+        if !self.inode.is_dir() {
+            return Err(KernelError::NotSupported);
+        }
+        let dir_stream = iters::Ext4DirStream::new(self.fs.clone(), self.clone());
+        Ok(Box::new(dir_stream))
     }
 }
 
@@ -201,8 +245,6 @@ impl Filesystem for Ext4Filesystem {
     }
 
     /// Returns the root inode of the mounted EXT4 filesystem.
-    ///
-    /// At present this is a dummy inode that only supports `getattr`.
     async fn root_inode(&self) -> Result<Arc<dyn Inode>> {
         let dinode = self.read_inode(2).await?;
         let id = InodeId::from_fsid_and_inodeid(self.id, 2);
@@ -289,6 +331,5 @@ mod tests {
         let root_inode = fs.read_inode(2).await.expect("read root inode");
         let id = InodeId::from_fsid_and_inodeid(1, 2);
         let inode = ExtInode::new(fs.this.clone(), root_inode, id);
-        assert!(dir_entry::is_dx_dir(&inode));
     }
 }
