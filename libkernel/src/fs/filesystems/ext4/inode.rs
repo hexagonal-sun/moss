@@ -68,7 +68,7 @@ pub union Ext4InodeOsd2 {
 #[derive(Copy, Clone)]
 pub struct Ext4Inode {
     /// File mode
-    pub mode: u16,
+    pub mode: Ext4InodeMode,
     /// Low 16 bits of Owner Uid
     pub uid: u16,
     /// Size in bytes
@@ -123,6 +123,31 @@ pub struct Ext4Inode {
 
 bitflags! {
     #[derive(Copy, Clone, Debug)]
+    pub struct Ext4InodeMode: u16 {
+        const IXOTH = 0x0001;
+        const IWOTH = 0x0002;
+        const IROTH = 0x0004;
+        const IXGRP = 0x0008;
+        const IWGRP = 0x0010;
+        const IRGRP = 0x0020;
+        const IXUSR = 0x0040;
+        const IWUSR = 0x0080;
+        const IRUSR = 0x0100;
+        const ISVTX = 0x0200;
+        const ISGID = 0x0400;
+        const ISUID = 0x0800;
+        const IFIFO = 0x1000;
+        const IFCHR = 0x2000;
+        const IFDIR = 0x4000;
+        const IFBLK = 0x6000;
+        const IFREG = 0x8000;
+        const IFLNK = 0xA000;
+        const IFSOCK = 0xC000;
+    }
+}
+
+bitflags! {
+    #[derive(Copy, Clone, Debug)]
     pub struct Ext4InodeFlags: u32 {
         const SECURE_DELETION = 0x00000001;
         const UNDELETE = 0x00000002;
@@ -157,6 +182,13 @@ bitflags! {
 }
 
 impl Ext4Inode {
+    pub fn size(&self) -> u64 {
+        self.size_lo as u64 | ((self.size_high as u64) << 32)
+    }
+
+    pub fn is_dir(&self) -> bool {
+        self.mode.contains(Ext4InodeMode::IFDIR)
+    }
 }
 
 unsafe impl Pod for Ext4InodeOsd1Linux {}
