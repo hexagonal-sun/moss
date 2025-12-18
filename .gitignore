@@ -2,3 +2,5 @@
 /build
 .gdb_history
 *.img
+.idea/
+.vscode/
