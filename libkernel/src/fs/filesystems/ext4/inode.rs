@@ -1,3 +1,4 @@
+use bitflags::bitflags;
 use crate::pod::Pod;
 
 #[repr(C)]
@@ -87,7 +88,7 @@ pub struct Ext4Inode {
     /// Blocks count
     pub blocks_lo: u32,
     /// File flags
-    pub flags: u32,
+    pub flags: Ext4InodeFlags,
     /// OS dependent 1
     pub osd1: Ext4InodeOsd1,
     /// Pointers to blocks
@@ -118,6 +119,44 @@ pub struct Ext4Inode {
     pub version_hi: u32,
     /// Project ID
     pub projid: u32,
+}
+
+bitflags! {
+    #[derive(Copy, Clone, Debug)]
+    pub struct Ext4InodeFlags: u32 {
+        const SECURE_DELETION = 0x00000001;
+        const UNDELETE = 0x00000002;
+        const COMPRESS = 0x00000004;
+        const SYNC = 0x00000008;
+        const IMMUTABLE = 0x00000010;
+        const APPEND_ONLY = 0x00000020;
+        const NODUMP = 0x00000040;
+        const NOATIME = 0x00000080;
+        /* Reserved for compression usage... */
+        const DIRTY = 0x00000100;
+        const COMPRBLK = 0x00000200;
+        const NOCOMPRESS = 0x00000400;
+        const ENCRYPT = 0x00000800;
+        /* End compression flags -- maybe not all used */
+        const INDEX = 0x00001000;
+        const IMAGIC = 0x00002000;
+        const JOURNAL_DATA = 0x00004000;
+        const NOTAIL = 0x00008000;
+        const DIRSYNC = 0x00010000;
+        const TOPDIR = 0x00020000;
+        const HUGE_FILE = 0x00040000;
+        const EXTENTS = 0x00080000;
+        const VERITY = 0x00100000;
+        const EA_INODE = 0x00200000;
+        const DAX = 0x02000000;
+        const INLINE_DATA = 0x10000000;
+        const PROJINHERIT = 0x20000000;
+        const CASEFOLD = 0x40000000;
+        const READONLY = 0x80000000;
+    }
+}
+
+impl Ext4Inode {
 }
 
 unsafe impl Pod for Ext4InodeOsd1Linux {}
