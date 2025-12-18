@@ -4,17 +4,6 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 
-mod dir;
-mod dir_entry;
-mod group;
-mod inode;
-mod iters;
-mod superblock;
-
-use group::Ext4BlockGroupDescriptor;
-use inode::Ext4Inode;
-use superblock::Ext4SuperBlock;
-
 use crate::proc::ids::{Gid, Uid};
 use crate::{
     error::{KernelError, Result},
@@ -28,308 +17,172 @@ use alloc::{
     boxed::Box,
     sync::{Arc, Weak},
 };
+use core::error::Error;
 use async_trait::async_trait;
+use ext4_view::{Ext4, Ext4Read};
 use crate::error::FsError;
 use crate::fs::{DirStream, Dirent};
-use crate::fs::filesystems::ext4::inode::{Ext4InodeFlags, Ext4InodeMode};
 use crate::fs::pathbuf::PathBuf;
 
-pub const EXT4_NAME_LEN: usize = 255;
-pub const BLOCK_SIZE: usize = 0x1000;                // 4KB
-pub const SECTORS_PER_BLOCK: usize = BLOCK_SIZE / 512;
-
+#[async_trait]
+impl Ext4Read for BlockBuffer {
+    async fn read(&mut self, start_byte: u64, dst: &mut [u8]) -> core::result::Result<(), Box<dyn Error + Send + Sync + 'static>> {
+        Ok(self.read_at(start_byte, dst).await?)
+    }
+}
 
 /// An EXT4 filesystem instance.
 ///
 /// For now this struct only stores the underlying block buffer and an ID
 /// assigned by the VFS when the filesystem is mounted.
 pub struct Ext4Filesystem {
-    dev: BlockBuffer,
-    pub superblock: Ext4SuperBlock,
+    inner: Ext4,
     id: u64,
-    this: Weak<Self>,
 }
 
 impl Ext4Filesystem {
     /// Construct a new EXT4 filesystem instance.
     pub async fn new(dev: BlockBuffer, id: u64) -> Result<Arc<Self>> {
-        // The EXT super-block lives at byte offset 1024.  Read it as a POD
-        // structure and do a very small sanity check so we fail fast on
-        // non-EXT images.
-        let sb: Ext4SuperBlock = dev.read_obj(1024).await?;
-        if sb.magic != 0xEF53 {
-            return Err(KernelError::Fs(crate::error::FsError::InvalidFs));
-        }
-
-        Ok(Arc::new_cyclic(|weak| Self {
-            dev,
-            superblock: sb,
+        Ok(Arc::new(Self {
+            inner: Ext4::load(Box::new(dev)).await.unwrap(),
             id,
-            this: weak.clone(),
         }))
     }
-
-    /// Reads a block-group descriptor from the primary descriptor table.
-    ///
-    /// The EXT4 primary GDT starts immediately after the super-block:
-    ///   • For 1 KiB block-size the SB is at block 1 ⇒ GDT begins at block 2
-    ///   • For larger block-sizes the SB is at block 0 ⇒ GDT begins at block 1
-    ///
-    /// Each descriptor is `desc_size` bytes (default 32).  Both `desc_size`
-    /// and `log_block_size` come from the super-block, so no additional I/O is
-    /// needed to compute the exact byte offset.
-    pub async fn read_group_desc(&self, group_idx: u32) -> Result<Ext4BlockGroupDescriptor> {
-        let block_size = 1024u64 << self.superblock.log_block_size;
-
-        let desc_size = if self.superblock.desc_size == 0 {
-            32usize
-        } else {
-            self.superblock.desc_size as usize
-        };
-
-        let descriptor_block = if block_size == 1024 { 2u64 } else { 1u64 };
-
-        let offset = descriptor_block * block_size + group_idx as u64 * desc_size as u64;
-
-        self.dev.read_obj(offset).await
-    }
-
-    /// Reads an inode from disk and returns the on-disk structure.
-    pub async fn read_inode(&self, ino: u32) -> Result<Ext4Inode> {
-        if ino == 0 {
-            return Err(KernelError::InvalidValue);
-        }
-
-        let inodes_per_group = self.superblock.inodes_per_group;
-        let group_idx = (ino - 1) / inodes_per_group;
-        let index = (ino - 1) % inodes_per_group;
-
-        let desc = self.read_group_desc(group_idx).await?;
-
-        let table_block = (desc.inode_table_lo as u64) | ((desc.inode_table_hi as u64) << 32);
-
-        let block_size = 1024u64 << self.superblock.log_block_size;
-        let inode_size = if self.superblock.inode_size == 0 {
-            128u64
-        } else {
-            self.superblock.inode_size as u64
-        };
-
-        let offset = table_block * block_size + index as u64 * inode_size;
-
-        self.dev.read_obj(offset).await
-    }
 }
 
-pub struct ExtInode {
-    pub fs: Weak<Ext4Filesystem>,
-    /// Actual on-disk inode id.
-    pub id: u64,
-    pub inode: Ext4Inode,
-    pub attr: FileAttr
-}
-
-impl ExtInode {
-    fn new(fs: Weak<Ext4Filesystem>, inode: Ext4Inode, id: InodeId) -> Self {
-        let size = ((inode.size_high as u64) << 32) | inode.size_lo as u64;
-
-        let mode_bits = inode.mode;
-        let file_type = if mode_bits.contains(Ext4InodeMode::IFDIR) {
-            FileType::Directory
-        } else if mode_bits.contains(Ext4InodeMode::IFREG) {
-            FileType::File
-        } else if mode_bits.contains(Ext4InodeMode::IFLNK) {
-            FileType::Symlink
-        } else if mode_bits.contains(Ext4InodeMode::IFSOCK) {
-            FileType::Socket
-        } else {
-            // TODO: handle other types
-            panic!("Unknown inode file type");
-        };
-        let permissions = FilePermissions::from_bits_truncate(mode_bits.bits() & 0o777);
-        let uid = Uid::new(inode.uid as u32);
-        let gid = Gid::new(inode.gid as u32);
-
-        let attr = FileAttr {
-            id,
-            file_type,
-            mode: permissions,
-            uid,
-            gid,
-            size,
-            nlinks: inode.links_count as u32,
-            ..FileAttr::default()
-        };
-        Self {
-            fs,
-            id: id.inode_id(),
-            inode,
-            attr
-        }
-    }
-}
-
-#[async_trait]
-impl Inode for ExtInode {
-    fn id(&self) -> InodeId {
-        self.attr.id
-    }
-
-    async fn read_at(&self, _offset: u64, _buf: &mut [u8]) -> Result<usize> {
-        Err(KernelError::NotSupported)
-    }
-
-    async fn write_at(&self, _offset: u64, _buf: &[u8]) -> Result<usize> {
-        Err(KernelError::NotSupported)
-    }
-
-    async fn truncate(&self, _size: u64) -> Result<()> {
-        Err(KernelError::NotSupported)
-    }
-
-    async fn getattr(&self) -> Result<FileAttr> {
-        Ok(self.attr.clone())
-    }
-
-    async fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
-        let fs = self.fs.upgrade().unwrap();
-        if !self.inode.is_dir() {
-            return Err(KernelError::Fs(FsError::NotADirectory));
-        }
-        if self.inode.flags.contains(Ext4InodeFlags::INDEX) {
-            // let entry = get_dir_entry_via_htree(fs, &self, name)?;
-            // return fs.read_inode(entry.inode).await.map(|inode| {
-            //     Arc::new(inode)
-            // });
-        }
-        let path = PathBuf::new();
-
-        // for entry in ReadDir::new(fs.clone(), &self, path)? {
-        //     let entry = entry?;
-        //     if entry.file_name() == name {
-        //         return fs.read_inode(entry.inode).await.map(|inode| {
-        //             Arc::new(inode)
-        //         });
-        //     }
-        // }
-
-        Err(KernelError::Fs(FsError::NotFound))
-    }
-
-    async fn create(
-        &self,
-        _name: &str,
-        _file_type: FileType,
-        _permissions: FilePermissions,
-    ) -> Result<Arc<dyn Inode>> {
-        Err(KernelError::NotSupported)
-    }
-
-    async fn unlink(&self, _name: &str) -> Result<()> {
-        Err(KernelError::NotSupported)
-    }
-
-    async fn readdir(&self, start_offset: u64) -> Result<Box<dyn DirStream>> {
-        if !self.inode.is_dir() {
-            return Err(KernelError::NotSupported);
-        }
-        let dir_stream = iters::Ext4DirStream::new(self.fs.clone(), self.clone());
-        Ok(Box::new(dir_stream))
-    }
-}
-
-#[async_trait]
-impl Filesystem for Ext4Filesystem {
-    fn id(&self) -> u64 {
-        self.id
-    }
-
-    /// Returns the root inode of the mounted EXT4 filesystem.
-    async fn root_inode(&self) -> Result<Arc<dyn Inode>> {
-        let dinode = self.read_inode(2).await?;
-        let id = InodeId::from_fsid_and_inodeid(self.id, 2);
-        Ok(Arc::new(ExtInode::new(self.this.clone(), dinode, id)))
-    }
-
-    /// Flushes any dirty data to the underlying block device.  The current
-    /// stub implementation simply forwards the request to `BlockBuffer::sync`.
-    async fn sync(&self) -> Result<()> {
-        self.dev.sync().await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::fs::BlockDevice;
-    use async_trait::async_trait;
-
-    /// Simple in-memory block device backed by the embedded ext4 test image.
-    struct MemBlkDevice {
-        data: &'static [u8],
-    }
-
-    #[async_trait]
-    impl BlockDevice for MemBlkDevice {
-        async fn read(&self, block_id: u64, buf: &mut [u8]) -> Result<()> {
-            // EXT4 sector size is typically 512. We use that here.
-            const BLOCK_SIZE: usize = 512;
-            let offset = (block_id as usize) * BLOCK_SIZE;
-            let end = offset + buf.len();
-            buf.copy_from_slice(&self.data[offset..end]);
-            Ok(())
-        }
-
-        async fn write(&self, _block_id: u64, _buf: &[u8]) -> Result<()> {
-            Err(KernelError::NotSupported)
-        }
-
-        fn block_size(&self) -> usize {
-            512
-        }
-
-        async fn sync(&self) -> Result<()> {
-            Ok(())
-        }
-    }
-
-    const IMG: &[u8] = include_bytes!("test_img/new_ext_img.img");
-
-    #[tokio::test]
-    async fn test_mount_ext4_image() {
-        // Wrap in our memory block device → BlockBuffer.
-        let blk_buf = BlockBuffer::new(Box::new(MemBlkDevice { data: IMG }));
-
-        // Attempt to mount.
-        let fs = Ext4Filesystem::new(blk_buf, 42)
-            .await
-            .expect("Failed to mount ext4 image");
-
-        // Fetch and inspect the root inode.
-        let root = fs.root_inode().await.expect("root inode");
-        let attr = root.getattr().await.expect("getattr");
-
-        assert_eq!(attr.file_type, FileType::Directory);
-        assert_eq!(attr.id.fs_id(), 42);
-        assert!(attr.size > 0);
-        assert_eq!(attr.mode.bits() & 0o777, 0o755);
-    }
-
-    #[tokio::test]
-    async fn test_read_group_desc() {
-        let blk_buf = BlockBuffer::new(Box::new(MemBlkDevice { data: IMG }));
-        let fs = Ext4Filesystem::new(blk_buf, 1).await.expect("mount");
-        let desc = fs.read_group_desc(0).await.expect("group desc");
-        // The inode table block for group 0 must be non-zero in a valid image.
-        assert!(desc.inode_table_lo != 0 || desc.inode_table_hi != 0);
-    }
-
-    #[tokio::test]
-    async fn test_read_root() {
-        let blk_buf = BlockBuffer::new(Box::new(MemBlkDevice { data: IMG }));
-        let fs = Ext4Filesystem::new(blk_buf, 1).await.expect("mount");
-        let root_inode = fs.read_inode(2).await.expect("read root inode");
-        let id = InodeId::from_fsid_and_inodeid(1, 2);
-        let inode = ExtInode::new(fs.this.clone(), root_inode, id);
-    }
-}
+// pub struct ExtInode {
+//     pub fs: Weak<Ext4Filesystem>,
+//     /// Actual on-disk inode id.
+//     pub id: u64,
+//     pub inode: Ext4Inode,
+//     pub attr: FileAttr
+// }
+//
+// impl ExtInode {
+//     fn new(fs: Weak<Ext4Filesystem>, inode: Ext4Inode, id: InodeId) -> Self {
+//         let size = ((inode.size_high as u64) << 32) | inode.size_lo as u64;
+//
+//         let mode_bits = inode.mode;
+//         let file_type = if mode_bits.contains(Ext4InodeMode::IFDIR) {
+//             FileType::Directory
+//         } else if mode_bits.contains(Ext4InodeMode::IFREG) {
+//             FileType::File
+//         } else if mode_bits.contains(Ext4InodeMode::IFLNK) {
+//             FileType::Symlink
+//         } else if mode_bits.contains(Ext4InodeMode::IFSOCK) {
+//             FileType::Socket
+//         } else {
+//             // TODO: handle other types
+//             panic!("Unknown inode file type");
+//         };
+//         let permissions = FilePermissions::from_bits_truncate(mode_bits.bits() & 0o777);
+//         let uid = Uid::new(inode.uid as u32);
+//         let gid = Gid::new(inode.gid as u32);
+//
+//         let attr = FileAttr {
+//             id,
+//             file_type,
+//             mode: permissions,
+//             uid,
+//             gid,
+//             size,
+//             nlinks: inode.links_count as u32,
+//             ..FileAttr::default()
+//         };
+//         Self {
+//             fs,
+//             id: id.inode_id(),
+//             inode,
+//             attr
+//         }
+//     }
+// }
+//
+// #[async_trait]
+// impl Inode for ExtInode {
+//     fn id(&self) -> InodeId {
+//         self.attr.id
+//     }
+//
+//     async fn read_at(&self, _offset: u64, _buf: &mut [u8]) -> Result<usize> {
+//         Err(KernelError::NotSupported)
+//     }
+//
+//     async fn write_at(&self, _offset: u64, _buf: &[u8]) -> Result<usize> {
+//         Err(KernelError::NotSupported)
+//     }
+//
+//     async fn truncate(&self, _size: u64) -> Result<()> {
+//         Err(KernelError::NotSupported)
+//     }
+//
+//     async fn getattr(&self) -> Result<FileAttr> {
+//         Ok(self.attr.clone())
+//     }
+//
+//     async fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
+//         let fs = self.fs.upgrade().unwrap();
+//         if !self.inode.is_dir() {
+//             return Err(KernelError::Fs(FsError::NotADirectory));
+//         }
+//         if self.inode.flags.contains(Ext4InodeFlags::INDEX) {
+//             // let entry = get_dir_entry_via_htree(fs, &self, name)?;
+//             // return fs.read_inode(entry.inode).await.map(|inode| {
+//             //     Arc::new(inode)
+//             // });
+//         }
+//         let path = PathBuf::new();
+//
+//         // for entry in ReadDir::new(fs.clone(), &self, path)? {
+//         //     let entry = entry?;
+//         //     if entry.file_name() == name {
+//         //         return fs.read_inode(entry.inode).await.map(|inode| {
+//         //             Arc::new(inode)
+//         //         });
+//         //     }
+//         // }
+//
+//         Err(KernelError::Fs(FsError::NotFound))
+//     }
+//
+//     async fn create(
+//         &self,
+//         _name: &str,
+//         _file_type: FileType,
+//         _permissions: FilePermissions,
+//     ) -> Result<Arc<dyn Inode>> {
+//         Err(KernelError::NotSupported)
+//     }
+//
+//     async fn unlink(&self, _name: &str) -> Result<()> {
+//         Err(KernelError::NotSupported)
+//     }
+//
+//     async fn readdir(&self, start_offset: u64) -> Result<Box<dyn DirStream>> {
+//         if !self.inode.is_dir() {
+//             return Err(KernelError::NotSupported);
+//         }
+//         let dir_stream = iters::Ext4DirStream::new(self.fs.clone(), self.clone());
+//         Ok(Box::new(dir_stream))
+//     }
+// }
+//
+// #[async_trait]
+// impl Filesystem for Ext4Filesystem {
+//     fn id(&self) -> u64 {
+//         self.id
+//     }
+//
+//     /// Returns the root inode of the mounted EXT4 filesystem.
+//     async fn root_inode(&self) -> Result<Arc<dyn Inode>> {
+//         let dinode = self.read_inode(2).await?;
+//         let id = InodeId::from_fsid_and_inodeid(self.id, 2);
+//         Ok(Arc::new(ExtInode::new(self.this.clone(), dinode, id)))
+//     }
+//
+//     /// Flushes any dirty data to the underlying block device.  The current
+//     /// stub implementation simply forwards the request to `BlockBuffer::sync`.
+//     async fn sync(&self) -> Result<()> {
+//         self.dev.sync().await
+//     }
+// }
