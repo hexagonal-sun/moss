@@ -50,6 +50,17 @@ pub fn kern_err_to_syscall(err: KernelError) -> isize {
         KernelError::SeekPipe => ESPIPE,
         KernelError::NotSupported => ENOSYS,
         KernelError::NoMemory => ENOMEM,
-        _ => todo!(),
+        KernelError::InUse => EBUSY,
+        KernelError::MappingError(_) => EFAULT,
+        KernelError::TooLarge => EFBIG,
+        KernelError::Probe(_) => ENODEV,
+        KernelError::Io(_) => EIO,
+        KernelError::Fs(_) => EIO,
+        KernelError::Exec(_) => ENOEXEC,
+        KernelError::BufferFull => ENOSPC,
+        KernelError::NoProcess => ESRCH,
+        KernelError::NotPermitted => EPERM,
+        KernelError::NoMemRegion => ENOMEM,
+        KernelError::Other(_) => EINVAL,
     }
 }
