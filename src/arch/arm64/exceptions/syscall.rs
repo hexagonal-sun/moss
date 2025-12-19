@@ -256,7 +256,7 @@ pub async fn handle_syscall() {
         }
         0xde => sys_mmap(arg1, arg2, arg3, arg4, arg5.into(), arg6).await,
         0xe2 => sys_mprotect(VA::from_value(arg1 as _), arg2 as _, arg3 as _),
-        0xe9 => { Ok(0) }, // sys_madvise is a no-op
+        0xe9 => Ok(0), // sys_madvise is a no-op
         0x104 => {
             sys_wait4(
                 arg1.cast_signed() as _,
