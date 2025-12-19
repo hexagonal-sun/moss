@@ -1,19 +1,21 @@
-use crate::sched::current_task;
-use alloc::vec::Vec;
-use libkernel::error::Result;
-use ringbuf::Arc;
-
 use super::{
     TaskState,
     thread_group::{ProcessState, Tgid, ThreadGroup, signal::SigId, wait::ChildState},
 };
+use crate::arch::{Arch, ArchImpl};
+use crate::sched::current_task;
+use alloc::vec::Vec;
+use libkernel::error::Result;
+use log::info;
+use ringbuf::Arc;
 
 pub fn do_exit_group(exit_code: ChildState) {
     let task = current_task();
     let process = Arc::clone(&task.process);
 
     if process.tgid.is_init() {
-        panic!("Attempted to kill init");
+        info!("init process exiting, powering off");
+        ArchImpl::power_off();
     }
 
     let parent = process
