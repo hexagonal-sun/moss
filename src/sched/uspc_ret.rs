@@ -1,4 +1,5 @@
 use super::{SCHED_STATE, current_task, schedule, waker::create_waker};
+use crate::process::TASK_LIST;
 use crate::{
     arch::{Arch, ArchImpl},
     process::{
@@ -144,6 +145,8 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                                     .borrow_mut()
                                     .run_queue
                                     .remove(&task.descriptor());
+                                let mut task_list = TASK_LIST.lock_save_irq();
+                                task_list.remove(&task.descriptor());
 
                                 state = State::PickNewTask;
                                 continue;
