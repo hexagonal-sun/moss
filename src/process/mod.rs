@@ -146,6 +146,8 @@ pub type ProcVM = ProcessVM<<ArchImpl as VirtualMemory>::ProcessAddressSpace>;
 pub struct Comm([u8; 16]);
 
 impl Comm {
+    /// Create a new command name from the given string.
+    /// Truncates to 15 characters if necessary, and null-terminates.
     pub fn new(name: &str) -> Self {
         let mut comm = [0u8; 16];
         let bytes = name.as_bytes();
