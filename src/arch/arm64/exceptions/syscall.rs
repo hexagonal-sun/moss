@@ -28,7 +28,7 @@ use crate::{
             sync::sys_sync,
         },
     },
-    kernel::sysinfo::sys_sysinfo_user,
+    kernel::sysinfo::sys_sysinfo,
     kernel::uname::sys_uname,
     memory::{
         brk::sys_brk,
@@ -232,7 +232,7 @@ pub async fn handle_syscall() {
         0xb0 => sys_getgid().map_err(|e| match e {}),
         0xb1 => sys_getegid().map_err(|e| match e {}),
         0xb2 => sys_gettid().map_err(|e| match e {}),
-        0xb3 => sys_sysinfo_user(TUA::from_value(arg1 as _)).await,
+        0xb3 => sys_sysinfo(TUA::from_value(arg1 as _)).await,
         0xc6 => Err(KernelError::NotSupported),
         0xd6 => sys_brk(VA::from_value(arg1 as _))
             .await

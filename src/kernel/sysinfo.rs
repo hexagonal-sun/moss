@@ -27,11 +27,42 @@ pub struct SysInfo {
     /// Number of current processes
     pub procs: u32,
     /// Total high memory size
-    pub totalhigh: u64,
+    pub total_high: u64,
     /// Available high memory size
-    pub freehigh: u64,
+    pub free_high: u64,
     /// Memory unit size in bytes
     pub mem_unit: u32,
+}
+
+impl SysInfo {
+    pub fn new() -> SysInfo {
+        // Gather memory statistics from the global page allocator.
+        let page_alloc = PAGE_ALLOC.get().expect("PAGE_ALLOC must be initialised");
+
+        let total_pages = page_alloc.total_pages();
+        let free_pages = page_alloc.free_pages();
+
+        let total_ram = (total_pages * PAGE_SIZE) as u64;
+        let free_ram = (free_pages * PAGE_SIZE) as u64;
+
+        // Count the number of processes currently known to the scheduler.
+        let procs = TASK_LIST.lock_save_irq().len() as u32;
+
+        SysInfo {
+            uptime: uptime().as_secs(),
+            loads: [0, 0, 0], // TODO: implement actual load averages
+            total_ram,
+            free_ram,
+            shared_ram: 0,
+            buffer_ram: 0,
+            total_swap: 0,
+            free_swap: 0,
+            procs,
+            total_high: 0,
+            free_high: 0,
+            mem_unit: 1, // All memory figures are given in bytes
+        }
+    }
 }
 
 #[repr(C)]
@@ -53,57 +84,9 @@ impl From<SysInfo> for PaddedSysInfo {
 
 unsafe impl UserCopyable for PaddedSysInfo {}
 
-pub async fn sys_sysinfo_user(info_ptr: TUA<PaddedSysInfo>) -> Result<usize> {
+pub async fn sys_sysinfo(info_ptr: TUA<PaddedSysInfo>) -> Result<usize> {
     // Build the structure in kernel memory first
-    let mut raw = SysInfo {
-        uptime: 0,
-        loads: [0; 3],
-        total_ram: 0,
-        free_ram: 0,
-        shared_ram: 0,
-        buffer_ram: 0,
-        total_swap: 0,
-        free_swap: 0,
-        procs: 0,
-        totalhigh: 0,
-        freehigh: 0,
-        mem_unit: 0,
-    };
-    // Populate with live kernel data
-    sys_sysinfo(&mut raw);
-    let padded = PaddedSysInfo::from(raw);
+    let padded = PaddedSysInfo::from(SysInfo::new());
     copy_to_user(info_ptr, padded).await?;
     Ok(0)
-}
-
-pub fn sys_sysinfo(info: &mut SysInfo) -> usize {
-    // Gather memory statistics from the global page allocator.
-    let page_alloc = PAGE_ALLOC
-        .get()
-        .expect("PAGE_ALLOC must be initialised before sys_sysinfo is called");
-
-    let total_pages = page_alloc.total_pages();
-    let free_pages = page_alloc.free_pages();
-
-    let total_ram = (total_pages * PAGE_SIZE) as u64;
-    let free_ram = (free_pages * PAGE_SIZE) as u64;
-
-    // Count the number of processes currently known to the scheduler.
-    let procs = TASK_LIST.lock_save_irq().len() as u32;
-
-    *info = SysInfo {
-        uptime: uptime().as_secs(),
-        loads: [0, 0, 0], // TODO: implement actual load averages
-        total_ram,
-        free_ram,
-        shared_ram: 0,
-        buffer_ram: 0,
-        total_swap: 0,
-        free_swap: 0,
-        procs,
-        totalhigh: 0,
-        freehigh: 0,
-        mem_unit: 1, // All memory figures are given in bytes
-    };
-    0 // Success
 }
