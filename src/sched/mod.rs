@@ -70,7 +70,7 @@ pub fn insert_task(task: Arc<Task>) {
 
 pub struct SchedState {
     running_task: Option<Arc<Task>>,
-    run_queue: BTreeMap<TaskDescriptor, Arc<Task>>,
+    pub run_queue: BTreeMap<TaskDescriptor, Arc<Task>>,
 }
 
 unsafe impl Send for SchedState {}
@@ -165,7 +165,7 @@ impl SchedState {
 }
 
 per_cpu! {
-    static SCHED_STATE: SchedState = SchedState::new;
+    pub static SCHED_STATE: SchedState = SchedState::new;
 }
 
 pub fn current_task() -> Arc<Task> {

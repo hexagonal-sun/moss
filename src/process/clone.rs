@@ -115,6 +115,9 @@ pub async fn sys_clone(
 
         Task {
             tid,
+            comm: Arc::new(SpinLock::new(
+                *current_task.comm.lock_save_irq(),
+            )),
             process: tg,
             vm,
             fd_table: files,
