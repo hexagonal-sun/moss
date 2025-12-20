@@ -331,6 +331,18 @@ impl<CPU: CpuOps> FrameAllocator<CPU> {
         }
     }
 
+    /// Returns the total number of pages managed by this allocator.
+    #[inline]
+    pub fn total_pages(&self) -> usize {
+        self.inner.lock_save_irq().total_pages
+    }
+
+    /// Returns the current number of free pages available for allocation.
+    #[inline]
+    pub fn free_pages(&self) -> usize {
+        self.inner.lock_save_irq().free_pages
+    }
+
     /// Initializes the frame allocator. This is the main bootstrap function.
     ///
     /// # Safety
