@@ -256,8 +256,8 @@ pub async fn handle_syscall() {
                 arg1 as _,
                 UA::from_value(arg2 as _),
                 UA::from_value(arg3 as _),
-                UA::from_value(arg4 as _),
-                arg5 as _,
+                UA::from_value(arg5 as _),
+                arg4 as _,
             )
             .await
         }
