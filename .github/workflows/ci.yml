@@ -34,5 +34,8 @@ jobs:
       - name: Run unit tests for libkernel
         run: cargo test -p libkernel --target x86_64-unknown-linux-gnu --all-features
 
+      - name: Install dependencies
+        run: sudo apt update && sudo apt install qemu-system-aarch64 dosfstools mtools gcc-aarch64-linux-gnu
+
       - name: Run userspace testing
-        run: sh scripts/qemu-test-runner.sh
+        run: CARGO_TARGET_AARCH64_UNKNOWN_NONE_SOFTFLOAT_RUNNER=./scripts/qemu-test-runner.sh cargo run -r
