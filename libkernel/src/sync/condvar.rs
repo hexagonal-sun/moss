@@ -51,7 +51,9 @@ impl<S, C: CpuOps> CondVar<S, C> {
 
         match updater(&mut inner.state) {
             WakeupType::None => (),
-            WakeupType::One => inner.wakers.wake_one(),
+            WakeupType::One => {
+                inner.wakers.wake_one();
+            }
             WakeupType::All => inner.wakers.wake_all(),
         }
     }

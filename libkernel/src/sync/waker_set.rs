@@ -54,9 +54,14 @@ impl WakerSet {
     }
 
     /// Wakes one waiting task, if any.
-    pub fn wake_one(&mut self) {
+    ///
+    /// Returns `true` if a waker was awoken, `false` otherwise.
+    pub fn wake_one(&mut self) -> bool {
         if let Some((_, waker)) = self.waiters.pop_first() {
             waker.wake();
+            true
+        } else {
+            false
         }
     }
 
