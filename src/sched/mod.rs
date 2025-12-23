@@ -224,3 +224,8 @@ fn get_idle_task() -> Arc<Task> {
         .get_or_init(|| Arc::new(ArchImpl::create_idle_task()))
         .clone()
 }
+
+pub fn sys_sched_yield() -> Result<usize> {
+    schedule();
+    Ok(0)
+}
