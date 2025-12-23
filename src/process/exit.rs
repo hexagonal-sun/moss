@@ -1,12 +1,13 @@
 use super::{
     TaskState,
     thread_group::{ProcessState, Tgid, ThreadGroup, signal::SigId, wait::ChildState},
+    threading::futex::{self, key::FutexKey},
 };
 use crate::memory::uaccess::copy_to_user;
-use crate::process::threading::futex_wake_addr;
 use crate::sched::current_task;
 use alloc::vec::Vec;
 use libkernel::error::Result;
+use log::warn;
 use ringbuf::Arc;
 
 pub fn do_exit_group(exit_code: ChildState) {
@@ -108,8 +109,11 @@ pub async fn sys_exit(exit_code: usize) -> Result<usize> {
     if let Some(ptr) = ptr {
         copy_to_user(ptr, 0u32).await?;
 
-        // Wake any thread waiting on this futex.
-        futex_wake_addr(ptr, 1);
+        if let Ok(key) = FutexKey::new_shared(ptr) {
+            futex::wake_key(1, key);
+        } else {
+            warn!("Failed to get futex wake key on sys_exit");
+        }
     }
 
     let process = Arc::clone(&task.process);
