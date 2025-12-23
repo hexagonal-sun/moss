@@ -48,6 +48,10 @@ impl WakerSet {
         id
     }
 
+    pub fn contains_token(&self, token: u64) -> bool {
+        self.waiters.contains_key(&token)
+    }
+
     /// Removes a waker using its token.
     pub fn remove(&mut self, token: u64) {
         self.waiters.remove(&token);
