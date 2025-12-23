@@ -1,5 +1,7 @@
 pub mod at;
 pub mod chdir;
+pub mod chmod;
+pub mod chown;
 pub mod close;
 pub mod ioctl;
 pub mod iov;

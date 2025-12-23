@@ -189,6 +189,11 @@ pub trait Inode: Send + Sync {
         Err(KernelError::NotSupported)
     }
 
+    /// Sets the metadata for this inode.
+    async fn setattr(&self, _attr: FileAttr) -> Result<()> {
+        Err(KernelError::NotSupported)
+    }
+
     /// Looks up a name within a directory, returning the corresponding inode.
     async fn lookup(&self, _name: &str) -> Result<Arc<dyn Inode>> {
         Err(KernelError::NotSupported)

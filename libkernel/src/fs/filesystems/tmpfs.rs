@@ -325,7 +325,7 @@ where
     T: AddressTranslator<()>,
 {
     entries: SpinLockIrq<Vec<TmpFsDirEnt>, C>,
-    attrs: FileAttr,
+    attrs: SpinLockIrq<FileAttr, C>,
     id: u64,
     fs: Weak<TmpFs<C, G, T>>,
     this: Weak<Self>,
@@ -388,7 +388,12 @@ where
     }
 
     async fn getattr(&self) -> Result<FileAttr> {
-        Ok(self.attrs.clone())
+        Ok(self.attrs.lock_save_irq().clone())
+    }
+
+    async fn setattr(&self, attr: FileAttr) -> Result<()> {
+        *self.attrs.lock_save_irq() = attr;
+        Ok(())
     }
 
     async fn readdir(&self, start_offset: u64) -> Result<Box<dyn DirStream>> {
@@ -452,13 +457,13 @@ where
     pub fn new(id: u64, fs: Weak<TmpFs<C, G, T>>, mode: FilePermissions) -> Arc<Self> {
         Arc::new_cyclic(|weak_this| Self {
             entries: SpinLockIrq::new(Vec::new()),
-            attrs: FileAttr {
+            attrs: SpinLockIrq::new(FileAttr {
                 size: 0,
                 file_type: FileType::Directory,
                 block_size: BLOCK_SZ as _,
                 mode,
                 ..Default::default()
-            },
+            }),
             id,
             fs,
             this: weak_this.clone(),

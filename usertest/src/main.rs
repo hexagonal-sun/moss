@@ -1,4 +1,5 @@
 use std::{
+    fs,
     sync::{Arc, Barrier, Mutex},
     thread,
 };
@@ -114,6 +115,112 @@ fn test_chroot() {
             }
         }
     }
+    println!(" OK");
+}
+
+fn test_chmod() {
+    print!("Testing chmod syscall ..."); // this actually tests fchmodat
+    let dir_path = "/tmp/chmod_test";
+    let c_dir_path = std::ffi::CString::new(dir_path).unwrap();
+    let mut buffer = std::mem::MaybeUninit::uninit();
+
+    fs::create_dir(dir_path).expect("Failed to create directory");
+
+    let mode = libc::S_IRUSR | libc::S_IWUSR | libc::S_IXUSR;
+    unsafe {
+        if libc::chmod(c_dir_path.as_ptr(), mode) != 0 {
+            panic!("chown failed");
+        }
+        if libc::stat(c_dir_path.as_ptr(), buffer.as_mut_ptr()) != 0 {
+            panic!("stat failed");
+        }
+        if buffer.assume_init().st_mode & 0o777 != mode {
+            panic!("fchmod failed");
+        }
+    }
+    fs::remove_dir(dir_path).expect("Failed to delete directory");
+    println!(" OK");
+}
+
+fn test_fchmod() {
+    print!("Testing fchmod syscall ...");
+    let dir_path = "/tmp/fchmod_test";
+    let c_dir_path = std::ffi::CString::new(dir_path).unwrap();
+    let mut buffer = std::mem::MaybeUninit::uninit();
+
+    fs::create_dir(dir_path).expect("Failed to create directory");
+
+    let mode = libc::S_IRUSR | libc::S_IWUSR | libc::S_IXUSR;
+    unsafe {
+        let fd = libc::open(c_dir_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY);
+        if fd == -1 {
+            panic!("open failed");
+        }
+        if libc::fchmod(fd, mode) != 0 {
+            panic!("fchmod failed");
+        }
+        if libc::fstat(fd, buffer.as_mut_ptr()) != 0 {
+            panic!("stat failed");
+        }
+        if buffer.assume_init().st_mode & 0o777 != mode {
+            panic!("fchmod failed");
+        }
+        libc::close(fd);
+    }
+    fs::remove_dir(dir_path).expect("Failed to delete directory");
+    println!(" OK");
+}
+
+fn test_chown() {
+    print!("Testing chown syscall ..."); // this actually tests fchownat
+    let dir_path = "/tmp/chown_test";
+    let c_dir_path = std::ffi::CString::new(dir_path).unwrap();
+    let mut buffer = std::mem::MaybeUninit::uninit();
+
+    fs::create_dir(dir_path).expect("Failed to create directory");
+
+    unsafe {
+        if libc::chown(c_dir_path.as_ptr(), 1, 1) != 0 {
+            panic!("chown failed");
+        }
+        if libc::stat(c_dir_path.as_ptr(), buffer.as_mut_ptr()) != 0 {
+            panic!("stat failed");
+        }
+        let stat = buffer.assume_init();
+        if stat.st_uid != 1 || stat.st_gid != 1 {
+            panic!("chown failed");
+        }
+    }
+    fs::remove_dir(dir_path).expect("Failed to delete directory");
+    println!(" OK");
+}
+
+fn test_fchown() {
+    print!("Testing fchown syscall ...");
+    let dir_path = "/tmp/fchown_test";
+    let c_dir_path = std::ffi::CString::new(dir_path).unwrap();
+    let mut buffer = std::mem::MaybeUninit::uninit();
+
+    fs::create_dir(dir_path).expect("Failed to create directory");
+
+    unsafe {
+        let fd = libc::open(c_dir_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY);
+        if fd == -1 {
+            panic!("open failed");
+        }
+        if libc::fchown(fd, 1, 1) != 0 {
+            panic!("fchown failed");
+        }
+        if libc::fstat(fd, buffer.as_mut_ptr()) != 0 {
+            panic!("stat failed");
+        }
+        let stat = buffer.assume_init();
+        if stat.st_uid != 1 || stat.st_gid != 1 {
+            panic!("fchown failed");
+        }
+        libc::close(fd);
+    }
+    fs::remove_dir(dir_path).expect("Failed to delete directory");
     println!(" OK");
 }
 
@@ -321,6 +428,10 @@ fn main() {
     run_test(test_chdir);
     run_test(test_fchdir);
     run_test(test_chroot);
+    run_test(test_chmod);
+    run_test(test_fchmod);
+    run_test(test_chown);
+    run_test(test_fchown);
     run_test(test_fork);
     run_test(test_read);
     run_test(test_write);

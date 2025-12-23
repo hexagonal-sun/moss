@@ -16,6 +16,13 @@ impl Uid {
     }
 }
 
+impl From<u64> for Uid {
+    /// Convenience implementation for syscalls.
+    fn from(value: u64) -> Self {
+        Self(value as _)
+    }
+}
+
 impl From<Uid> for u32 {
     fn from(value: Uid) -> Self {
         value.0
@@ -33,6 +40,13 @@ impl Gid {
 
     pub fn new_root_group() -> Self {
         Self(0)
+    }
+}
+
+impl From<u64> for Gid {
+    /// Convenience implementation for syscalls.
+    fn from(value: u64) -> Self {
+        Self(value as _)
     }
 }
 

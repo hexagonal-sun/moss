@@ -7,6 +7,8 @@ use crate::{
         syscalls::{
             at::{
                 access::{sys_faccessat, sys_faccessat2},
+                chmod::sys_fchmodat,
+                chown::sys_fchownat,
                 mkdir::sys_mkdirat,
                 open::sys_openat,
                 readlink::sys_readlinkat,
@@ -14,6 +16,8 @@ use crate::{
                 unlink::sys_unlinkat,
             },
             chdir::{sys_chdir, sys_chroot, sys_fchdir, sys_getcwd},
+            chmod::sys_fchmod,
+            chown::sys_fchown,
             close::sys_close,
             ioctl::sys_ioctl,
             iov::{sys_readv, sys_writev},
@@ -98,6 +102,18 @@ pub async fn handle_syscall() {
         0x31 => sys_chdir(TUA::from_value(arg1 as _)).await,
         0x32 => sys_fchdir(arg1.into()).await,
         0x33 => sys_chroot(TUA::from_value(arg1 as _)).await,
+        0x34 => sys_fchmod(arg1.into(), arg2 as _).await,
+        0x35 => sys_fchmodat(arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
+        0x36 => {
+            sys_fchownat(
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                arg3.into(),
+                arg4.into(),
+            )
+            .await
+        }
+        0x37 => sys_fchown(arg1.into(), arg2.into(), arg3.into()).await,
         0x38 => {
             sys_openat(
                 arg1.into(),

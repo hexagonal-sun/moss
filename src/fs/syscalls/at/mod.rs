@@ -6,6 +6,8 @@ use libkernel::{
 };
 
 pub mod access;
+pub mod chmod;
+pub mod chown;
 pub mod mkdir;
 pub mod open;
 pub mod readlink;
