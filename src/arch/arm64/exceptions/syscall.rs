@@ -62,7 +62,7 @@ use crate::{
             umask::sys_umask,
             wait::sys_wait4,
         },
-        threading::{sys_futex, sys_set_robust_list, sys_set_tid_address},
+        threading::{futex::sys_futex, sys_set_robust_list, sys_set_tid_address},
     },
     sched::current_task,
 };
