@@ -6,9 +6,9 @@ use crate::{
     sched::current_task,
 };
 
-use libkernel::error::{KernelError, Result};
-
 use super::{SigId, uaccess::UserSigId};
+use crate::process::thread_group::TG_LIST;
+use libkernel::error::{KernelError, Result};
 
 pub fn sys_kill(pid: PidT, signal: UserSigId) -> Result<usize> {
     let signal: SigId = signal.try_into()?;
@@ -92,4 +92,14 @@ pub fn sys_tkill(tid: PidT, signal: UserSigId) -> Result<usize> {
     }
 
     Ok(0)
+}
+
+pub fn send_signal_to_pg(pgid: Pgid, signal: SigId) {
+    for tg_weak in TG_LIST.lock_save_irq().values() {
+        if let Some(tg) = tg_weak.upgrade()
+            && *tg.pgid.lock_save_irq() == pgid
+        {
+            tg.signals.lock_save_irq().set_pending(signal);
+        }
+    }
 }

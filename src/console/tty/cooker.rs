@@ -1,7 +1,12 @@
 use super::meta::TtyMetadata;
+use super::meta::VSUSP;
 use super::{TtyInputHandler, meta::*};
 use crate::console::Console;
 use crate::kernel::kpipe::KPipe;
+use crate::process::thread_group::Pgid;
+use crate::process::thread_group::signal::SigId;
+use crate::process::thread_group::signal::kill::send_signal_to_pg;
+use crate::sched::current_task;
 use crate::sync::{CondVar, SpinLock};
 use alloc::{sync::Arc, vec::Vec};
 use libkernel::error::Result;
@@ -46,6 +51,50 @@ impl TtyInputHandler for SpinLock<TtyInputCooker> {
             console,
             ..
         } = &mut *this;
+
+        // Handle signal-generating control characters
+        if termios.c_lflag.contains(TermiosLocalFlags::ISIG) {
+            let intr_char = termios.c_cc[VINTR];
+            let quit_char = termios.c_cc[VQUIT];
+            let susp_char = termios.c_cc[VSUSP];
+
+            let sig = if byte == intr_char {
+                Some(SigId::SIGINT)
+            } else if byte == quit_char {
+                Some(SigId::SIGQUIT)
+            } else if byte == susp_char {
+                Some(SigId::SIGTSTP)
+            } else {
+                None
+            };
+
+            if let Some(sig) = sig {
+                let echo_enabled = termios.c_lflag.contains(TermiosLocalFlags::ECHO);
+                let console_clone = console.clone();
+                let pgid: Pgid = {
+                    let meta = this.meta.lock_save_irq();
+                    meta.fg_pg
+                        .unwrap_or_else(|| *current_task().process.pgid.lock_save_irq())
+                };
+
+                drop(this);
+
+                send_signal_to_pg(pgid, sig);
+
+                if echo_enabled
+                    && let Some(display) = match sig {
+                        SigId::SIGINT => Some(b"^C\r\n".as_slice()),
+                        SigId::SIGQUIT => Some(b"^\\\r\n".as_slice()),
+                        SigId::SIGTSTP => Some(b"^Z\r\n".as_slice()),
+                        _ => None,
+                    }
+                {
+                    console_clone.write_buf(display);
+                }
+
+                return;
+            }
+        }
 
         // Check if we are in canonical mode
         if !termios.c_lflag.contains(TermiosLocalFlags::ICANON) {
