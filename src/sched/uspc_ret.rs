@@ -115,7 +115,25 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                         }
                         Poll::Pending => {
                             task.ctx.lock_save_irq().put_signal_work(signal_work);
-                            *task.state.lock_save_irq() = TaskState::Sleeping;
+                            let mut task_state = task.state.lock_save_irq();
+
+                            match *task_state {
+                                // The main path we expect to take to sleep the
+                                // task.
+                                TaskState::Running => *task_state = TaskState::Sleeping,
+                                // If we were woken between the future returning
+                                // `Poll::Pending` and acquiring the lock above,
+                                // the waker will have put us into this state.
+                                // Transition back to `Running` since we're
+                                // ready to progress with more work.
+                                TaskState::Woken => *task_state = TaskState::Running,
+                                // We should never get here for any other state.
+                                s => {
+                                    unreachable!(
+                                        "Unexpected task state {s:?} during signal task sleep"
+                                    );
+                                }
+                            }
 
                             state = State::PickNewTask;
                             continue;
@@ -166,7 +184,25 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             // state to sleeping so it's not scheduled again and
                             // search for another task to execute.
                             task.ctx.lock_save_irq().put_kernel_work(kern_work);
-                            *task.state.lock_save_irq() = TaskState::Sleeping;
+                            let mut task_state = task.state.lock_save_irq();
+
+                            match *task_state {
+                                // The main path we expect to take to sleep the
+                                // task.
+                                TaskState::Running => *task_state = TaskState::Sleeping,
+                                // If we were woken between the future returning
+                                // `Poll::Pending` and acquiring the lock above,
+                                // the waker will have put us into this state.
+                                // Transition back to `Running` since we're
+                                // ready to progress with more work.
+                                TaskState::Woken => *task_state = TaskState::Running,
+                                // We should never get here for any other state.
+                                s => {
+                                    unreachable!(
+                                        "Unexpected task state {s:?} during kernel task sleep"
+                                    );
+                                }
+                            }
                             state = State::PickNewTask;
                             continue;
                         }

@@ -13,8 +13,19 @@ unsafe fn wake_waker(data: *const ()) {
         && let Some(proc) = proc.upgrade()
     {
         let mut state = proc.lock_save_irq();
-        if *state == TaskState::Sleeping {
-            *state = TaskState::Runnable;
+        match *state {
+            // If the task has been put to sleep, then wake it up.
+            TaskState::Sleeping => {
+                *state = TaskState::Runnable;
+            }
+            // If the task is running, mark it so it doesn't actually go to
+            // sleep when poll returns. This covers the small race-window
+            // between a future returning `Poll::Pending` and the sched setting
+            // the state to sleeping.
+            TaskState::Running => {
+                *state = TaskState::Woken;
+            }
+            _ => {}
         }
     }
 }

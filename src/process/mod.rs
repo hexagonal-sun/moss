@@ -117,6 +117,7 @@ impl TaskDescriptor {
 pub enum TaskState {
     Running,
     Runnable,
+    Woken,
     Stopped,
     Sleeping,
     Finished,
@@ -127,6 +128,7 @@ impl Display for TaskState {
         let state_str = match self {
             TaskState::Running => "R",
             TaskState::Runnable => "R",
+            TaskState::Woken => "W",
             TaskState::Stopped => "T",
             TaskState::Sleeping => "S",
             TaskState::Finished => "Z",
