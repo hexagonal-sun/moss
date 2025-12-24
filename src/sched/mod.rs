@@ -96,6 +96,8 @@ impl SchedState {
         if let Some(ref prev_task) = previous_task
             && Arc::ptr_eq(&next_task, prev_task)
         {
+            // Ensure the task state is running.
+            *next_task.state.lock_save_irq() = TaskState::Running;
             return Ok(());
         }
 
