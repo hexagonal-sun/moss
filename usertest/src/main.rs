@@ -12,6 +12,16 @@ fn test_sync() {
     println!(" OK");
 }
 
+fn test_clock_sleep() {
+    const SLEEP_LEN: Duration = Duration::from_millis(100);
+
+    print!("Testing clock and sleep syscalls ...");
+    let now = Instant::now();
+    sleep(SLEEP_LEN);
+    assert!(now.elapsed() >= SLEEP_LEN);
+    println!(" OK");
+}
+
 fn test_opendir() {
     print!("Testing opendir syscall ...");
     let path = std::ffi::CString::new("/").unwrap();
@@ -494,6 +504,7 @@ fn main() {
     println!("Running userspace tests ...");
     let start = std::time::Instant::now();
     run_test(test_sync);
+    run_test(test_clock_sleep);
     run_test(test_opendir);
     run_test(test_readdir);
     run_test(test_chdir);
