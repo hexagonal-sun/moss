@@ -22,6 +22,7 @@ pub mod pathbuf;
 use crate::{
     driver::CharDevDescriptor,
     error::{FsError, KernelError, Result},
+    fs::{path::Path, pathbuf::PathBuf},
 };
 use alloc::{boxed::Box, string::String, sync::Arc};
 use async_trait::async_trait;
@@ -219,8 +220,18 @@ pub trait Inode: Send + Sync {
         Err(KernelError::NotSupported)
     }
 
+    /// Creates a new symlink
+    async fn symlink(&self, _name: &str, _target: &Path) -> Result<()> {
+        Err(KernelError::NotSupported)
+    }
+
     /// Reads the contents of a directory.
     async fn readdir(&self, _start_offset: u64) -> Result<Box<dyn DirStream>> {
         Err(FsError::NotADirectory.into())
+    }
+
+    /// Reads the path of a symlink.
+    async fn readlink(&self) -> Result<PathBuf> {
+        Err(KernelError::NotSupported)
     }
 }

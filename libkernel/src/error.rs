@@ -95,6 +95,9 @@ pub enum FsError {
 
     #[error("The device could not be found")]
     NoDevice,
+
+    #[error("Too many symbolic links encountered")]
+    Loop,
 }
 
 #[derive(Error, Debug, PartialEq, Eq, Clone)]

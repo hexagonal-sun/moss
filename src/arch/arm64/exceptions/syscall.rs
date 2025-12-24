@@ -14,6 +14,7 @@ use crate::{
                 open::sys_openat,
                 readlink::sys_readlinkat,
                 stat::sys_newfstatat,
+                symlink::sys_symlinkat,
                 unlink::sys_unlinkat,
             },
             chdir::{sys_chdir, sys_chroot, sys_fchdir, sys_getcwd},
@@ -98,6 +99,14 @@ pub async fn handle_syscall() {
         0x1d => sys_ioctl(arg1.into(), arg2 as _, arg3 as _).await,
         0x22 => sys_mkdirat(arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
         0x23 => sys_unlinkat(arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
+        0x24 => {
+            sys_symlinkat(
+                TUA::from_value(arg1 as _),
+                arg2.into(),
+                TUA::from_value(arg3 as _),
+            )
+            .await
+        }
         0x25 => {
             sys_linkat(
                 arg1.into(),

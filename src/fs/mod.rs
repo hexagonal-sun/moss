@@ -1,5 +1,6 @@
 use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::{collections::btree_map::BTreeMap, sync::Arc};
 use async_trait::async_trait;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -22,6 +23,8 @@ pub mod open_file;
 pub mod pipe;
 pub mod reg;
 pub mod syscalls;
+
+const MAX_SYMLINK: u32 = 40;
 
 /// A dummy inode used as a placeholder before the root filesystem is mounted.
 pub struct DummyInode {}
@@ -177,13 +180,63 @@ impl VFS {
         root: Arc<dyn Inode>,
         task: Arc<Task>,
     ) -> Result<Arc<dyn Inode>> {
-        let mut current_inode = if path.is_absolute() {
+        let root = if path.is_absolute() {
             task.root.lock_save_irq().0.clone() // use the task's root inode, in case a custom chroot was set
         } else {
             root
         };
 
-        for component in path.components() {
+        self.resolve_path_internal(path, root, true).await
+    }
+
+    pub async fn resolve_path_nofollow(
+        &self,
+        path: &Path,
+        root: Arc<dyn Inode>,
+        task: Arc<Task>,
+    ) -> Result<Arc<dyn Inode>> {
+        let root = if path.is_absolute() {
+            task.root.lock_save_irq().0.clone()
+        } else {
+            root
+        };
+
+        self.resolve_path_internal(path, root, false).await
+    }
+
+    /// Resolves a path string to an Inode, starting from a given root for
+    /// relative paths, and using the filesystem root inode for absolute paths.
+    pub async fn resolve_path_absolute(
+        &self,
+        path: &Path,
+        root: Arc<dyn Inode>,
+    ) -> Result<Arc<dyn Inode>> {
+        let root = if path.is_absolute() {
+            self.root_inode
+                .lock_save_irq()
+                .as_ref()
+                .cloned()
+                .ok_or(FsError::NotFound)?
+        } else {
+            root
+        };
+
+        self.resolve_path_internal(path, root, true).await
+    }
+
+    async fn resolve_path_internal(
+        &self,
+        path: &Path,
+        root: Arc<dyn Inode>,
+        follow_last_sym: bool,
+    ) -> Result<Arc<dyn Inode>> {
+        let mut current_inode = root;
+        let mut symlink_count = 0;
+
+        let mut components: Vec<_> = path.components().map(|s| s.to_owned()).collect();
+        components.reverse();
+
+        while let Some(component) = components.pop() {
             // Before looking up the component, check if the current inode is a
             // mount point. If so, traverse into the mounted filesystem's root.
             if let Some(mount_root) = self
@@ -194,8 +247,31 @@ impl VFS {
                 current_inode = mount_root;
             }
 
+            let next_inode = current_inode.lookup(&component).await?;
+
+            let resolved_inode = if let Some(mount_root) =
+                self.state.lock_save_irq().get_mount_root(&next_inode.id())
+            {
+                mount_root
+            } else {
+                next_inode
+            };
+
+            if let Some(new_inode) = self
+                .resolve_symlink(resolved_inode, &mut components, follow_last_sym)
+                .await?
+            {
+                symlink_count += 1;
+                if symlink_count > MAX_SYMLINK {
+                    return Err(FsError::Loop.into()); // prevent infinite looping
+                }
+
+                current_inode = new_inode;
+                continue;
+            }
+
             // Delegate the lookup to the underlying filesystem.
-            current_inode = current_inode.lookup(component).await?;
+            current_inode = current_inode.lookup(&component).await?;
         }
 
         // After the final lookup, check if the destination is itself a mount point.
@@ -210,48 +286,33 @@ impl VFS {
         Ok(current_inode)
     }
 
-    /// Resolves a path string to an Inode, starting from a given root for
-    /// relative paths, and using the filesystem root inode for absolute paths.
-    pub async fn resolve_path_absolute(
+    async fn resolve_symlink(
         &self,
-        path: &Path,
-        root: Arc<dyn Inode>,
-    ) -> Result<Arc<dyn Inode>> {
-        let mut current_inode = if path.is_absolute() {
-            self.root_inode
-                .lock_save_irq()
-                .as_ref()
-                .cloned()
-                .ok_or(FsError::NotFound)?
+        inode: Arc<dyn Inode>,
+        components: &mut Vec<String>,
+        follow_last: bool,
+    ) -> Result<Option<Arc<dyn Inode>>> {
+        let attr = inode.getattr().await?;
+        if attr.file_type != FileType::Symlink {
+            return Ok(None);
+        }
+
+        if !follow_last && components.is_empty() {
+            return Ok(None);
+        }
+
+        let target = inode.readlink().await?;
+        let mut new_components: Vec<_> = target.components().map(|s| s.to_owned()).collect();
+        new_components.reverse();
+        for comp in new_components {
+            components.push(comp);
+        }
+        Ok(Some(if target.is_absolute() {
+            // if absolute, restart from root
+            self.root_inode.lock_save_irq().as_ref().unwrap().clone()
         } else {
-            root
-        };
-
-        for component in path.components() {
-            // Before looking up the component, check if the current inode is a
-            // mount point. If so, traverse into the mounted filesystem's root.
-            if let Some(mount_root) = self
-                .state
-                .lock_save_irq()
-                .get_mount_root(&current_inode.id())
-            {
-                current_inode = mount_root;
-            }
-
-            // Delegate the lookup to the underlying filesystem.
-            current_inode = current_inode.lookup(component).await?;
-        }
-
-        // After the final lookup, check if the destination is itself a mount point.
-        if let Some(mount_root) = self
-            .state
-            .lock_save_irq()
-            .get_mount_root(&current_inode.id())
-        {
-            current_inode = mount_root;
-        }
-
-        Ok(current_inode)
+            inode
+        }))
     }
 
     /// Returns a clone of the root inode.
@@ -349,7 +410,7 @@ impl VFS {
 
                 Ok(Arc::new(open_file))
             }
-            FileType::Symlink => todo!(),
+            FileType::Symlink => unimplemented!(), // this is implemented at resolve_path_internal
             FileType::BlockDevice(_) => todo!(),
             FileType::CharDevice(char_dev_descriptor) => {
                 let char_driver = DM
@@ -419,7 +480,9 @@ impl VFS {
         task: Arc<Task>,
     ) -> Result<()> {
         // First, resolve the target inode so we can inspect its type.
-        let target_inode = self.resolve_path(path, root.clone(), task.clone()).await?;
+        let target_inode = self
+            .resolve_path_nofollow(path, root.clone(), task.clone())
+            .await?;
 
         let attr = target_inode.getattr().await?;
 
@@ -494,6 +557,35 @@ impl VFS {
                 }
 
                 parent_inode.link(name, target_inode.clone()).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn symlink(
+        &self,
+        target: &Path,
+        link: &Path,
+        root: Arc<dyn Inode>,
+        task: Arc<Task>,
+    ) -> Result<()> {
+        match self.resolve_path(link, root.clone(), task.clone()).await {
+            Ok(_) => Err(FsError::AlreadyExists.into()),
+            Err(KernelError::Fs(FsError::NotFound)) => {
+                let name = link.file_name().ok_or(FsError::InvalidInput)?;
+
+                let parent_inode = if let Some(parent_path) = link.parent() {
+                    self.resolve_path(parent_path, root.clone(), task).await?
+                } else {
+                    root.clone()
+                };
+
+                // verify that the parent inode is a directory
+                if parent_inode.getattr().await?.file_type != FileType::Directory {
+                    return Err(FsError::NotADirectory.into());
+                }
+
+                parent_inode.symlink(name, target).await
             }
             Err(e) => Err(e),
         }

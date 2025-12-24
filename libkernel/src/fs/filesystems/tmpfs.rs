@@ -4,6 +4,8 @@ use crate::{
     fs::{
         DirStream, Dirent, FileType, Filesystem, Inode, InodeId,
         attr::{FileAttr, FilePermissions},
+        path::Path,
+        pathbuf::PathBuf,
     },
     memory::{
         PAGE_SIZE,
@@ -14,6 +16,7 @@ use crate::{
     sync::spinlock::SpinLockIrq,
 };
 use alloc::{
+    borrow::ToOwned,
     boxed::Box,
     string::{String, ToString},
     sync::{Arc, Weak},
@@ -479,6 +482,29 @@ where
 
         Ok(())
     }
+
+    async fn symlink(&self, name: &str, target: &Path) -> Result<()> {
+        let mut entries = self.entries.lock_save_irq();
+
+        if entries.iter().any(|e| e.name == name) {
+            return Err(FsError::AlreadyExists.into());
+        }
+
+        let fs = self.fs.upgrade().ok_or(FsError::InvalidFs)?;
+        let new_id = fs.alloc_inode_id();
+        let inode_id = InodeId::from_fsid_and_inodeid(fs.id(), new_id);
+
+        let inode = Arc::new(TmpFsSymlinkInode::<C>::new(inode_id, target.to_owned())?);
+
+        entries.push(TmpFsDirEnt {
+            name: name.to_string(),
+            id: inode.id(),
+            kind: FileType::Symlink,
+            inode,
+        });
+
+        Ok(())
+    }
 }
 
 impl<C, G, T> TmpFsDirInode<C, G, T>
@@ -500,6 +526,47 @@ where
             id,
             fs,
             this: weak_this.clone(),
+        })
+    }
+}
+
+struct TmpFsSymlinkInode<C: CpuOps> {
+    id: InodeId,
+    target: PathBuf,
+    attr: SpinLockIrq<FileAttr, C>,
+}
+
+#[async_trait]
+impl<C: CpuOps> Inode for TmpFsSymlinkInode<C> {
+    fn id(&self) -> InodeId {
+        self.id
+    }
+
+    async fn getattr(&self) -> Result<FileAttr> {
+        Ok(self.attr.lock_save_irq().clone())
+    }
+
+    async fn setattr(&self, attr: FileAttr) -> Result<()> {
+        *self.attr.lock_save_irq() = attr;
+        Ok(())
+    }
+
+    async fn readlink(&self) -> Result<PathBuf> {
+        Ok(self.target.clone())
+    }
+}
+
+impl<C: CpuOps> TmpFsSymlinkInode<C> {
+    fn new(id: InodeId, target: PathBuf) -> Result<Self> {
+        Ok(Self {
+            id,
+            target,
+            attr: SpinLockIrq::new(FileAttr {
+                file_type: FileType::Symlink,
+                size: 0,
+                nlinks: 1,
+                ..Default::default()
+            }),
         })
     }
 }

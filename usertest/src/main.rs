@@ -293,23 +293,70 @@ fn test_write() {
 
 fn test_link() {
     print!("Testing link syscall ..."); // actually tests linkat
-    let file = "/tmp/link_test";
-    let c_file = std::ffi::CString::new(file).unwrap();
+    let path = "/tmp/link_test";
     let link = "/tmp/link_test_link";
+    let c_path = std::ffi::CString::new(path).unwrap();
     let c_link = std::ffi::CString::new(link).unwrap();
+    let mut stat_targetbuf = std::mem::MaybeUninit::uninit();
+    let mut stat_linkbuf = std::mem::MaybeUninit::uninit();
+
     unsafe {
-        let fd = libc::open(c_file.as_ptr(), libc::O_CREAT, 0o777);
+        let fd = libc::open(c_path.as_ptr(), libc::O_CREAT, 0o777);
         if fd < 0 {
             panic!("open failed");
         }
         libc::close(fd);
 
-        let ret = libc::link(c_file.as_ptr(), c_link.as_ptr());
+        let ret = libc::link(c_path.as_ptr(), c_link.as_ptr());
         if ret < 0 {
             panic!("link failed");
         }
+        let ret = libc::stat(c_link.as_ptr(), stat_linkbuf.as_mut_ptr());
+        if ret < 0 {
+            panic!("stat failed");
+        }
+        let ret = libc::stat(c_path.as_ptr(), stat_targetbuf.as_mut_ptr());
+        if ret < 0 {
+            panic!("stat failed");
+        }
+        if stat_linkbuf.assume_init().st_ino != stat_targetbuf.assume_init().st_ino {
+            panic!("link failed");
+        }
     }
-    fs::remove_file(file).expect("Failed to delete file");
+    fs::remove_file(path).expect("Failed to delete file");
+    fs::remove_file(link).expect("Failed to delete link");
+    println!(" OK");
+}
+
+fn test_symlink() {
+    use std::fs::{self, File};
+    use std::io::{Read, Write};
+
+    print!("Testing symlink syscall ..."); // actually tests symlinkat
+    let path = "/tmp/symlink_test";
+    let link = "/tmp/symlink_test_link";
+    let c_path = std::ffi::CString::new(path).unwrap();
+    let c_link = std::ffi::CString::new(link).unwrap();
+
+    let mut file = File::create_new(path).expect("Failed to create file");
+    file.write_all(b"Hello, world!")
+        .expect("Failed to write to file");
+
+    unsafe {
+        let ret = libc::symlink(c_path.as_ptr(), c_link.as_ptr());
+        if ret < 0 {
+            panic!("symlink failed");
+        }
+
+        let mut file = File::open(link).expect("Failed to open file");
+        let mut string = String::new();
+        file.read_to_string(&mut string)
+            .expect("Failed to read from file");
+        if string != "Hello, world!" {
+            panic!("symlink failed");
+        }
+    }
+    fs::remove_file(path).expect("Failed to delete file");
     fs::remove_file(link).expect("Failed to delete link");
     println!(" OK");
 }
@@ -544,6 +591,7 @@ fn main() {
     run_test(test_read);
     run_test(test_write);
     run_test(test_link);
+    run_test(test_symlink);
     run_test(test_futex);
     run_test(test_truncate);
     run_test(test_ftruncate);

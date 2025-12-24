@@ -13,6 +13,7 @@ pub mod mkdir;
 pub mod open;
 pub mod readlink;
 pub mod stat;
+pub mod symlink;
 pub mod unlink;
 
 bitflags::bitflags! {
