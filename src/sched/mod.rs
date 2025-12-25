@@ -5,7 +5,6 @@ use crate::{
     process::{TASK_LIST, Task, TaskDescriptor, TaskState},
     sync::OnceLock,
 };
-use alloc::vec::Vec;
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
 use core::cell::{OnceCell, SyncUnsafeCell};
 use core::cmp::Ordering;
@@ -52,7 +51,7 @@ fn get_cpu_id() -> CpuId {
 
 fn get_sched_state() -> &'static mut SchedState {
     let cpu_id = get_cpu_id();
-    let idx = cpu_id.0;
+    let idx = cpu_id.value();
     debug_assert!(idx < SCHED_STATES.len(), "CPU id out of bounds");
 
     // Get a mutable reference to the Option<SchedState> stored in the static array.
@@ -66,7 +65,7 @@ fn get_sched_state() -> &'static mut SchedState {
 }
 
 fn get_sched_state_by_id(cpu_id: CpuId) -> Option<&'static mut SchedState> {
-    let idx = cpu_id.0;
+    let idx = cpu_id.value();
     debug_assert!(idx < SCHED_STATES.len(), "CPU id out of bounds");
 
     // Get a mutable reference to the Option<SchedState> stored in the static array.
@@ -85,22 +84,6 @@ fn with_cpu_sched_state(cpu_id: CpuId, f: impl FnOnce(&mut SchedState)) {
         return;
     };
     f(sched_state);
-}
-
-pub fn all_tasks() -> Vec<Arc<Task>> {
-    let mut tasks = Vec::new();
-
-    for slot in SCHED_STATES.iter() {
-        let slot: &mut Option<SchedState> = unsafe { &mut *slot.get() };
-
-        if let Some(sched_state) = slot.as_mut() {
-            for task in sched_state.run_queue.values() {
-                tasks.push(task.clone());
-            }
-        }
-    }
-
-    tasks
 }
 
 pub fn find_task_by_descriptor(descriptor: &TaskDescriptor) -> Option<Arc<Task>> {

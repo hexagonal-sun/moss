@@ -2,6 +2,7 @@ use super::{
     exceptions::{ExceptionState, secondary_exceptions_init},
     memory::{fixmap::FIXMAPS, mmu::setup_kern_addr_space},
 };
+use crate::drivers::timer::kick_current_cpu;
 use crate::{
     arch::{ArchImpl, arm64::exceptions::exceptions_init},
     console::setup_console_logger,
@@ -35,7 +36,6 @@ use libkernel::{
 use logical_map::setup_logical_map;
 use memory::{setup_allocator, setup_stack_and_heap};
 use secondary::{boot_secondaries, cpu_count, save_idmap, secondary_booted};
-use crate::drivers::timer::kick_current_cpu;
 
 mod exception_level;
 mod logical_map;
