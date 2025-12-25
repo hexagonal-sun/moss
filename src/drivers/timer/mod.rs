@@ -6,13 +6,11 @@ use core::{
 };
 
 use super::Driver;
-use crate::arch::ArchImpl;
 use crate::{
     interrupts::{InterruptDescriptor, InterruptHandler},
     sync::{OnceLock, SpinLock},
 };
 use alloc::{collections::binary_heap::BinaryHeap, sync::Arc};
-use libkernel::CpuOps;
 
 pub mod armv8_arch;
 

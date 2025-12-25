@@ -10,6 +10,7 @@ use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
 use core::cell::{OnceCell, SyncUnsafeCell};
 use core::cmp::Ordering;
 use core::sync::atomic::AtomicUsize;
+use core::time::Duration;
 use libkernel::{CpuOps, UserAddressSpace, error::Result};
 
 pub mod uspc_ret;
@@ -31,6 +32,11 @@ impl CpuId {
 // TODO: arbitrary cap.
 pub static SCHED_STATES: [SyncUnsafeCell<Option<SchedState>>; 128] =
     [const { SyncUnsafeCell::new(None) }; 128];
+
+/// Default time-slice (in milliseconds) assigned to runnable tasks.
+/// A small constant keeps the implementation simple while still allowing
+/// reasonable inter-activity.
+const DEFAULT_TIME_SLICE_MS: u64 = 4;
 
 per_cpu! {
     pub static CPU_ID: OnceCell<CpuId> = OnceCell::new;
@@ -213,17 +219,33 @@ impl SchedState {
             return Ok(());
         }
 
-        // Update vruntime and clear exec_start for the previous task.
+        // Update vruntime, clear exec_start and assign a new eligible virtual deadline
+        // for the previous task.
         if let Some(ref prev_task) = previous_task {
             if let Some(start) = *prev_task.exec_start.lock_save_irq() {
                 let delta = now_inst - start;
                 *prev_task.vruntime.lock_save_irq() += delta.as_nanos() as u64;
             }
             *prev_task.exec_start.lock_save_irq() = None;
+
+            // Issue a fresh virtual deadline for the task according to the default
+            // time slice.
+            *prev_task.deadline.lock_save_irq() =
+                Some(now_inst + Duration::from_millis(DEFAULT_TIME_SLICE_MS));
         }
 
         // Record the start time for the task we are about to run.
         *next_task.exec_start.lock_save_irq() = Some(now_inst);
+
+        // Make sure the task possesses an eligible virtual deadline. If none is set
+        // (or the previous one has elapsed) we hand out a brand-new one.
+        {
+            let mut deadline_guard = next_task.deadline.lock_save_irq();
+            // Refresh deadline if none is set or the previous deadline has elapsed.
+            if deadline_guard.map_or(true, |d| d <= now_inst) {
+                *deadline_guard = Some(now_inst + Duration::from_millis(DEFAULT_TIME_SLICE_MS));
+            }
+        }
 
         // Context switch, the previous task's state should already been updated
         // prior to calling this function.
@@ -257,21 +279,36 @@ impl SchedState {
                 state == TaskState::Runnable && !candidate_proc.is_idle_task()
             })
             .min_by(|proc1, proc2| {
-                let vr1 = *proc1.vruntime.lock_save_irq();
-                let vr2 = *proc2.vruntime.lock_save_irq();
+                if proc1.is_idle_task() {
+                    return Ordering::Greater;
+                } else if proc2.is_idle_task() {
+                    return Ordering::Less;
+                }
+                let d1 = *proc1.deadline.lock_save_irq();
+                let d2 = *proc2.deadline.lock_save_irq();
 
-                vr1.cmp(&vr2).then_with(|| {
-                    // Tie-breaker: fall back to last run timestamp.
-                    let last_run1 = proc1.last_run.lock_save_irq();
-                    let last_run2 = proc2.last_run.lock_save_irq();
+                match (d1, d2) {
+                    (Some(t1), Some(t2)) => t1.cmp(&t2),
+                    (Some(_), None) => Ordering::Less,
+                    (None, Some(_)) => Ordering::Greater,
+                    (None, None) => {
+                        let vr1 = *proc1.vruntime.lock_save_irq();
+                        let vr2 = *proc2.vruntime.lock_save_irq();
 
-                    match (*last_run1, *last_run2) {
-                        (Some(t1), Some(t2)) => t1.cmp(&t2),
-                        (Some(_), None) => Ordering::Less,
-                        (None, Some(_)) => Ordering::Greater,
-                        (None, None) => Ordering::Equal,
+                        vr1.cmp(&vr2).then_with(|| {
+                            // Tie-breaker: fall back to last run timestamp.
+                            let last_run1 = proc1.last_run.lock_save_irq();
+                            let last_run2 = proc2.last_run.lock_save_irq();
+
+                            match (*last_run1, *last_run2) {
+                                (Some(t1), Some(t2)) => t1.cmp(&t2),
+                                (Some(_), None) => Ordering::Less,
+                                (None, Some(_)) => Ordering::Greater,
+                                (None, None) => Ordering::Equal,
+                            }
+                        })
                     }
-                })
+                }
             })
             .unwrap_or(idle_task)
             .clone()
