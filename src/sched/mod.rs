@@ -1,4 +1,4 @@
-use crate::drivers::timer::now;
+use crate::drivers::timer::{now, schedule_preempt};
 use crate::{
     arch::{Arch, ArchImpl},
     per_cpu,
@@ -245,6 +245,9 @@ impl SchedState {
             if deadline_guard.map_or(true, |d| d <= now_inst) {
                 *deadline_guard = Some(now_inst + Duration::from_millis(DEFAULT_TIME_SLICE_MS));
             }
+            if let Some(d) = *deadline_guard {
+                schedule_preempt(d);
+            }
         }
 
         // Context switch, the previous task's state should already been updated
@@ -375,7 +378,7 @@ pub fn sys_sched_yield() -> Result<usize> {
     Ok(0)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn sched_yield() {
+#[inline(always)]
+pub fn sched_yield() {
     schedule();
 }

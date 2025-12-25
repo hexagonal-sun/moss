@@ -32,7 +32,7 @@ enum WakeupKind {
     Task(Waker),
 
     /// This wake up is for the kernel's preemption mechanism.
-    _Preempt,
+    Preempt,
 }
 
 struct WakeupEvent {
@@ -130,7 +130,7 @@ impl InterruptHandler for SysTimer {
 
                 match event.what {
                     WakeupKind::Task(waker) => waker.wake(),
-                    WakeupKind::_Preempt => todo!(),
+                    WakeupKind::Preempt => crate::sched::sched_yield(),
                 }
             } else {
                 // The next event is in the future, so we're done.
@@ -189,6 +189,22 @@ impl SysTimer {
         .await
     }
 
+    /// Schedule a pre-emption event for the current CPU.
+    pub fn schedule_preempt(&self, when: Instant) {
+        let mut wake_q = self.wakeup_q.lock_save_irq();
+
+        // Insert the pre-emption event.
+        wake_q.push(WakeupEvent {
+            when,
+            what: WakeupKind::Preempt,
+        });
+
+        // Ensure the hardware timer is armed for the earliest event.
+        if let Some(next_event) = wake_q.peek() {
+            self.driver.schedule_interrupt(Some(next_event.when));
+        }
+    }
+
     /// Arms the hardware timer on the current CPU so that the next scheduled
     /// `WakeupEvent` (or the fallback pre-emption tick) will fire.
     /// Secondary CPUs should call this right after they have enabled their
@@ -237,6 +253,14 @@ pub async fn sleep(duration: Duration) {
 pub fn kick_current_cpu() {
     if let Some(timer) = SYS_TIMER.get() {
         timer.kick_current_cpu();
+    }
+}
+
+/// Arms a pre-emption timer for the running task on this CPU.
+/// Called by the scheduler every time it issues a new eligible virtual deadline.
+pub fn schedule_preempt(when: Instant) {
+    if let Some(timer) = SYS_TIMER.get() {
+        timer.schedule_preempt(when);
     }
 }
 
