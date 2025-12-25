@@ -162,7 +162,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             // task to execute, removing this task from the
                             // runqueue, reaping it's resouces.
                             if task.state.lock_save_irq().is_finished() {
-                                get_sched_state().run_queue.remove(&task.descriptor());
+                                get_sched_state().remove_task_with_weight(&task.descriptor());
                                 let mut task_list = TASK_LIST.lock_save_irq();
                                 task_list.remove(&task.descriptor());
 

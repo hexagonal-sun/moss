@@ -1,4 +1,4 @@
-use crate::drivers::timer::{now, schedule_preempt};
+use crate::drivers::timer::{Instant, now, schedule_preempt};
 use crate::{
     arch::{Arch, ArchImpl},
     process::{TASK_LIST, Task, TaskDescriptor, TaskState},
@@ -33,6 +33,15 @@ pub static SCHED_STATES: [SyncUnsafeCell<Option<SchedState>>; 128] =
 
 /// Default time-slice (in milliseconds) assigned to runnable tasks.
 const DEFAULT_TIME_SLICE_MS: u64 = 4;
+
+/// Fixed-point configuration for virtual-time accounting.
+/// We now use a 65.63 format (65 integer bits, 63 fractional bits) as
+/// recommended by the EEVDF paper to minimise rounding error accumulation.
+pub const VT_FIXED_SHIFT: u32 = 63;
+pub const VT_ONE: u128 = 1u128 << VT_FIXED_SHIFT;
+/// Tolerance used when comparing virtual-time values (see EEVDF, Fixed-Point Arithmetic).
+/// Two virtual-time instants whose integer parts differ by no more than this constant are considered equal.
+pub const VCLOCK_EPSILON: u128 = VT_ONE;
 
 fn get_sched_state() -> &'static mut SchedState {
     let cpu_id = CpuId::this();
@@ -118,7 +127,30 @@ fn schedule() {
 
     let previous_task = current_task();
     let sched_state = get_sched_state();
+
+    // Bring the virtual clock up-to-date so that eligibility tests use the
+    // most recent value.
+    let now_inst = now().expect("System timer not initialised");
+    sched_state.advance_vclock(now_inst);
+
     let next_task = sched_state.find_next_runnable_task();
+    // if previous_task.tid != next_task.tid {
+    //     if matches!(*previous_task.state.lock_save_irq(), TaskState::Sleeping | TaskState::Finished) {
+    //         log::debug!(
+    //             "CPU {} scheduling switch due to removal from run queue: {} -> {}",
+    //             CpuId::this().value(),
+    //             previous_task.tid.value(),
+    //             next_task.tid.value()
+    //         );
+    //     } else {
+    //         log::debug!(
+    //             "CPU {} scheduling switch: {} -> {}",
+    //             CpuId::this().value(),
+    //             previous_task.tid.value(),
+    //             next_task.tid.value()
+    //         );
+    //     }
+    // }
     if previous_task.tid == next_task.tid {
         // No context switch needed.
         return;
@@ -149,23 +181,121 @@ fn get_next_cpu() -> CpuId {
 pub fn insert_task(task: Arc<Task>, cpu: Option<CpuId>) {
     let cpu = cpu.unwrap_or_else(get_next_cpu);
     with_cpu_sched_state(cpu, |sched_state| {
-        sched_state.run_queue.insert(task.descriptor(), task);
+        sched_state.add_task(task);
     });
 }
 
 pub struct SchedState {
+    /// Task that is currently running on this CPU (if any).
     running_task: Option<Arc<Task>>,
+    // TODO: To be changed to virtual-deadline key for better performance
+    // TODO: Use a red-black tree for better performance.
     pub run_queue: BTreeMap<TaskDescriptor, Arc<Task>>,
+    /// Per-CPU virtual clock (fixed-point 65.63 stored in a u128).
+    /// Expressed in virtual-time units as defined by the EEVDF paper.
+    vclock: u128,
+    /// Cached sum of weights of all tasks in the run queue (`sum w_i`).
+    total_weight: u64,
+    /// Real-time moment when `vclock` was last updated.
+    last_update: Option<Instant>,
 }
 
 unsafe impl Send for SchedState {}
 
 impl SchedState {
+    /// Inserts `task` into this CPU's run-queue and updates all EEVDF
+    /// accounting information (eligible time, virtual deadline and the cached
+    /// weight sum).
+    pub fn add_task(&mut self, task: Arc<Task>) {
+        // Always advance the virtual clock first so that eligibility and
+        // deadline calculations for the incoming task are based on the most
+        // recent time stamp.
+        let now_inst = now().expect("System timer not initialised");
+        self.advance_vclock(now_inst);
+
+        let desc = task.descriptor();
+
+        if self.run_queue.contains_key(&desc) {
+            return;
+        }
+
+        // A freshly enqueued task becomes eligible immediately.
+        *task.v_eligible.lock_save_irq() = self.vclock;
+
+        // Grant it an initial virtual deadline proportional to its weight.
+        let q_ns: u128 = (DEFAULT_TIME_SLICE_MS as u128) * 1_000_000;
+        let v_delta = (q_ns << VT_FIXED_SHIFT) / task.weight() as u128;
+        let new_v_deadline = self.vclock + v_delta;
+        *task.v_deadline.lock_save_irq() = new_v_deadline;
+
+        // Since the task is not executing yet, its exec_start must be `None`.
+        *task.exec_start.lock_save_irq() = None;
+
+        if !task.is_idle_task() {
+            self.total_weight = self.total_weight.saturating_add(task.weight() as u64);
+        }
+
+        // Decide whether the currently-running task must be preempted
+        // immediately.
+        let newcomer_eligible = {
+            let v_e = *task.v_eligible.lock_save_irq();
+            v_e.saturating_sub(self.vclock) <= VCLOCK_EPSILON
+        };
+        let preempt_now = if newcomer_eligible {
+            if let Some(ref current) = self.running_task {
+                let current_deadline = *current.v_deadline.lock_save_irq();
+                new_v_deadline < current_deadline
+            } else {
+                true
+            }
+        } else {
+            false
+        };
+
+        self.run_queue.insert(desc, task);
+
+        // Arm an immediate preemption timer so that the interrupt
+        // handler will force the actual context switch as soon as possible.
+        if preempt_now {
+            schedule_preempt(now_inst + Duration::from_nanos(1));
+        }
+    }
+
+    /// Removes a task given its descriptor and subtracts its weight from the
+    /// cached `total_weight`.  Missing descriptors are ignored.
+    pub fn remove_task_with_weight(&mut self, desc: &TaskDescriptor) {
+        if let Some(task) = self.run_queue.remove(desc) {
+            if task.is_idle_task() {
+                panic!("Cannot remove the idle task");
+            }
+            self.total_weight = self.total_weight.saturating_sub(task.weight() as u64);
+        }
+    }
     pub const fn new() -> Self {
         Self {
             running_task: None,
             run_queue: BTreeMap::new(),
+            vclock: 0,
+            total_weight: 0,
+            last_update: None,
         }
+    }
+
+    /// Advance the per-CPU virtual clock (`vclock`) by converting the elapsed
+    /// real time since the last update into 65.63-format fixed-point
+    /// virtual-time units:
+    ///     v += (delta t << VT_FIXED_SHIFT) /  sum w
+    /// The caller must pass the current real time (`now_inst`).
+    fn advance_vclock(&mut self, now_inst: Instant) {
+        if let Some(prev) = self.last_update {
+            let delta_real = now_inst - prev;
+            if self.total_weight > 0 {
+                let delta_vt =
+                    ((delta_real.as_nanos()) << VT_FIXED_SHIFT) / self.total_weight as u128;
+                self.vclock = self.vclock.saturating_add(delta_vt);
+            }
+        }
+        self.last_update = Some(now_inst);
     }
 
     fn switch_to_task(
@@ -174,6 +304,8 @@ impl SchedState {
         next_task: Arc<Task>,
     ) -> Result<()> {
         let now_inst = now().expect("System timer not initialised");
+        // Update the virtual clock before we do any other accounting.
+        self.advance_vclock(now_inst);
 
         if let Some(ref prev_task) = previous_task {
             *prev_task.last_run.lock_save_irq() = Some(now_inst);
@@ -190,23 +322,33 @@ impl SchedState {
         // Update vruntime, clear exec_start and assign a new eligible virtual deadline
         // for the previous task.
         if let Some(ref prev_task) = previous_task {
-            if let Some(start) = *prev_task.exec_start.lock_save_irq() {
+            // Compute how much virtual time the task actually consumed.
+            let delta_vt = if let Some(start) = *prev_task.exec_start.lock_save_irq() {
                 let delta = now_inst - start;
-                *prev_task.vruntime.lock_save_irq() += delta.as_nanos() as u64;
-            }
+                let w = prev_task.weight() as u128;
+                let dv = ((delta.as_nanos() as u128) << VT_FIXED_SHIFT) / w;
+                *prev_task.vruntime.lock_save_irq() += dv;
+                dv
+            } else {
+                0
+            };
             *prev_task.exec_start.lock_save_irq() = None;
 
-            // Issue a fresh virtual deadline for the task according to the default
-            // time slice.
-            *prev_task.deadline.lock_save_irq() =
-                Some(now_inst + Duration::from_millis(DEFAULT_TIME_SLICE_MS));
+            // Advance its eligible time by the virtual run time it just used
+            // (EEVDF: v_ei += t_used / w_i).
+            *prev_task.v_eligible.lock_save_irq() += delta_vt;
+
+            // Re-issue a virtual deadline
+            let q_ns: u128 = (DEFAULT_TIME_SLICE_MS as u128) * 1_000_000;
+            let v_delta = (q_ns << VT_FIXED_SHIFT) / prev_task.weight() as u128;
+            let v_ei = *prev_task.v_eligible.lock_save_irq();
+            *prev_task.v_deadline.lock_save_irq() = v_ei + v_delta;
         }
 
-        // Record the start time for the task we are about to run.
         *next_task.exec_start.lock_save_irq() = Some(now_inst);
 
         // Make sure the task possesses an eligible virtual deadline. If none is set
-        // (or the previous one has elapsed) we hand out a brand-new one.
+        // (or the previous one has elapsed), we hand out a brand-new one.
         {
             let mut deadline_guard = next_task.deadline.lock_save_irq();
             // Refresh deadline if none is set or the previous deadline has elapsed.
@@ -218,7 +360,7 @@ impl SchedState {
             }
         }
 
-        // Context switch, the previous task's state should already been updated
+        // Trigger context switch, the previous task's state should already been updated
         // prior to calling this function.
         if let Some(ref prev_task) = previous_task {
             debug_assert_eq!(*prev_task.state.lock_save_irq(), TaskState::Runnable);
@@ -246,8 +388,11 @@ impl SchedState {
             // We only care about processes that are ready to run.
             .filter(|candidate_proc| {
                 let state = *candidate_proc.state.lock_save_irq();
-                // A process is a candidate if it's runnable and NOT the idle task
-                state == TaskState::Runnable && !candidate_proc.is_idle_task()
+                let eligible_vt = *candidate_proc.v_eligible.lock_save_irq();
+                state == TaskState::Runnable
+                    && !candidate_proc.is_idle_task()
+                    // Allow a small epsilon tolerance to compensate for rounding
+                    && eligible_vt.saturating_sub(self.vclock) <= VCLOCK_EPSILON
             })
             .min_by(|proc1, proc2| {
                 if proc1.is_idle_task() {
@@ -255,31 +400,25 @@ impl SchedState {
                 } else if proc2.is_idle_task() {
                     return Ordering::Less;
                 }
-                let d1 = *proc1.deadline.lock_save_irq();
-                let d2 = *proc2.deadline.lock_save_irq();
+                let vd1 = *proc1.v_deadline.lock_save_irq();
+                let vd2 = *proc2.v_deadline.lock_save_irq();
 
-                match (d1, d2) {
-                    (Some(t1), Some(t2)) => t1.cmp(&t2),
-                    (Some(_), None) => Ordering::Less,
-                    (None, Some(_)) => Ordering::Greater,
-                    (None, None) => {
-                        let vr1 = *proc1.vruntime.lock_save_irq();
-                        let vr2 = *proc2.vruntime.lock_save_irq();
+                vd1.cmp(&vd2).then_with(|| {
+                    let vr1 = *proc1.vruntime.lock_save_irq();
+                    let vr2 = *proc2.vruntime.lock_save_irq();
 
-                        vr1.cmp(&vr2).then_with(|| {
-                            // Tie-breaker: fall back to last run timestamp.
-                            let last_run1 = proc1.last_run.lock_save_irq();
-                            let last_run2 = proc2.last_run.lock_save_irq();
+                    vr1.cmp(&vr2).then_with(|| {
+                        let last_run1 = proc1.last_run.lock_save_irq();
+                        let last_run2 = proc2.last_run.lock_save_irq();
 
-                            match (*last_run1, *last_run2) {
-                                (Some(t1), Some(t2)) => t1.cmp(&t2),
-                                (Some(_), None) => Ordering::Less,
-                                (None, Some(_)) => Ordering::Greater,
-                                (None, None) => Ordering::Equal,
-                            }
-                        })
-                    }
-                }
+                        match (*last_run1, *last_run2) {
+                            (Some(t1), Some(t2)) => t1.cmp(&t2),
+                            (Some(_), None) => Ordering::Less,
+                            (None, Some(_)) => Ordering::Greater,
+                            (None, None) => Ordering::Equal,
+                        }
+                    })
+                })
             })
             .unwrap_or(idle_task)
             .clone()
@@ -306,6 +445,7 @@ pub fn sched_init() {
         .activate();
 
     *init_task.state.lock_save_irq() = TaskState::Running;
+    get_sched_state().running_task = Some(idle_task.clone());
 
     {
         let mut task_list = TASK_LIST.lock_save_irq();
@@ -324,13 +464,14 @@ pub fn sched_init() {
 
 pub fn sched_init_secondary() {
     let idle_task = get_idle_task();
+    get_sched_state().running_task = Some(idle_task.clone());
 
     // Important to ensure that the idle task is in the TASK_LIST for this CPU.
     insert_task(idle_task.clone(), Some(CpuId::this()));
 
     get_sched_state()
         .switch_to_task(None, idle_task)
-        .expect("Failed to swtich to idle task");
+        .expect("Failed to switch to idle task");
 }
 
 fn get_idle_task() -> Arc<Task> {

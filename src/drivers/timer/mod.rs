@@ -140,9 +140,9 @@ impl InterruptHandler for SysTimer {
 
         // Always re-arm: either next task/event, or a periodic/preemption tick.
         let next_deadline = wake_q.peek().map(|e| e.when).or_else(|| {
-            // fallback: schedule a preemption tick in 15 ms
-            // TODO: find a better way to do this
-            let when = self.driver.now() + Duration::from_millis(15);
+            // fallback: schedule a preemption tick in 50 ms
+            // TODO: Remove when feeling more secure about scheduling
+            let when = self.driver.now() + Duration::from_millis(50);
             Some(when)
         });
 
@@ -189,7 +189,7 @@ impl SysTimer {
         .await
     }
 
-    /// Schedule a pre-emption event for the current CPU.
+    /// Schedule a preemption event for the current CPU.
     pub fn schedule_preempt(&self, when: Instant) {
         let mut wake_q = self.wakeup_q.lock_save_irq();
 

@@ -164,6 +164,11 @@ impl Comm {
     }
 }
 
+/// Scheduler base weight to ensure tasks always have a strictly positive
+/// scheduling weight. The value is added to a task's priority to obtain its
+/// effective weight (`w_i` in EEVDF paper).
+pub const SCHED_WEIGHT_BASE: i32 = 1024;
+
 pub struct Task {
     pub tid: Tid,
     pub comm: Arc<SpinLock<Comm>>,
@@ -176,7 +181,11 @@ pub struct Task {
     pub ctx: SpinLock<Context>,
     pub sig_mask: SpinLock<SigSet>,
     pub pending_signals: SpinLock<SigSet>,
-    pub vruntime: SpinLock<u64>,
+    pub vruntime: SpinLock<u128>,
+    /// Virtual time at which the task becomes eligible (v_ei).
+    pub v_eligible: SpinLock<u128>,
+    /// Virtual deadline (v_di) used by the EEVDF scheduler.
+    pub v_deadline: SpinLock<u128>,
     pub exec_start: SpinLock<Option<Instant>>,
     pub deadline: SpinLock<Option<Instant>>,
     pub priority: i8,
@@ -212,6 +221,8 @@ impl Task {
             sig_mask: SpinLock::new(SigSet::empty()),
             pending_signals: SpinLock::new(SigSet::empty()),
             vruntime: SpinLock::new(0),
+            v_eligible: SpinLock::new(0),
+            v_deadline: SpinLock::new(0),
             exec_start: SpinLock::new(None),
             deadline: SpinLock::new(None),
             fd_table: Arc::new(SpinLock::new(FileDescriptorTable::new())),
@@ -236,6 +247,8 @@ impl Task {
             fd_table: Arc::new(SpinLock::new(FileDescriptorTable::new())),
             pending_signals: SpinLock::new(SigSet::empty()),
             vruntime: SpinLock::new(0),
+            v_eligible: SpinLock::new(0),
+            v_deadline: SpinLock::new(0),
             exec_start: SpinLock::new(None),
             deadline: SpinLock::new(None),
             sig_mask: SpinLock::new(SigSet::empty()),
@@ -255,6 +268,15 @@ impl Task {
 
     pub fn priority(&self) -> i8 {
         self.priority
+    }
+
+    /// Compute this task's scheduling weight.
+    ///
+    /// weight = priority + SCHED_WEIGHT_BASE
+    /// The sum is clamped to a minimum of 1
+    pub fn weight(&self) -> u32 {
+        let w = self.priority as i32 + SCHED_WEIGHT_BASE;
+        if w <= 0 { 1 } else { w as u32 }
     }
 
     pub fn set_priority(&mut self, priority: i8) {
