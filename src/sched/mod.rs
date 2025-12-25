@@ -1,12 +1,11 @@
 use crate::drivers::timer::{now, schedule_preempt};
 use crate::{
     arch::{Arch, ArchImpl},
-    per_cpu,
     process::{TASK_LIST, Task, TaskDescriptor, TaskState},
     sync::OnceLock,
 };
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
-use core::cell::{OnceCell, SyncUnsafeCell};
+use core::cell::SyncUnsafeCell;
 use core::cmp::Ordering;
 use core::sync::atomic::AtomicUsize;
 use core::time::Duration;
@@ -33,24 +32,10 @@ pub static SCHED_STATES: [SyncUnsafeCell<Option<SchedState>>; 128] =
     [const { SyncUnsafeCell::new(None) }; 128];
 
 /// Default time-slice (in milliseconds) assigned to runnable tasks.
-/// A small constant keeps the implementation simple while still allowing
-/// reasonable inter-activity.
 const DEFAULT_TIME_SLICE_MS: u64 = 4;
 
-per_cpu! {
-    pub static CPU_ID: OnceCell<CpuId> = OnceCell::new;
-}
-
-fn get_cpu_id() -> CpuId {
-    CPU_ID
-        .borrow()
-        .get()
-        .cloned()
-        .unwrap_or_else(|| CpuId::this())
-}
-
 fn get_sched_state() -> &'static mut SchedState {
-    let cpu_id = get_cpu_id();
+    let cpu_id = CpuId::this();
     let idx = cpu_id.value();
     debug_assert!(idx < SCHED_STATES.len(), "CPU id out of bounds");
 
@@ -90,10 +75,10 @@ pub fn find_task_by_descriptor(descriptor: &TaskDescriptor) -> Option<Arc<Task>>
     for slot in SCHED_STATES.iter() {
         let slot: &mut Option<SchedState> = unsafe { &mut *slot.get() };
 
-        if let Some(sched_state) = slot.as_mut() {
-            if let Some(task) = sched_state.run_queue.get(descriptor) {
-                return Some(task.clone());
-            }
+        if let Some(sched_state) = slot.as_mut()
+            && let Some(task) = sched_state.run_queue.get(descriptor)
+        {
+            return Some(task.clone());
         }
     }
 
@@ -225,7 +210,7 @@ impl SchedState {
         {
             let mut deadline_guard = next_task.deadline.lock_save_irq();
             // Refresh deadline if none is set or the previous deadline has elapsed.
-            if deadline_guard.map_or(true, |d| d <= now_inst) {
+            if deadline_guard.is_none_or(|d| d <= now_inst) {
                 *deadline_guard = Some(now_inst + Duration::from_millis(DEFAULT_TIME_SLICE_MS));
             }
             if let Some(d) = *deadline_guard {
