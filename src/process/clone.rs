@@ -1,4 +1,6 @@
 use super::{ctx::Context, thread_group::signal::SigSet};
+use crate::arch::ArchImpl;
+use crate::interrupts::cpu_messenger;
 use crate::memory::uaccess::copy_to_user;
 use crate::{
     process::{TASK_LIST, Task, TaskState},
@@ -6,6 +8,8 @@ use crate::{
     sync::SpinLock,
 };
 use bitflags::bitflags;
+use libkernel::CpuOps;
+use core::sync::atomic::{AtomicU32, Ordering};
 use libkernel::memory::address::TUA;
 use libkernel::{
     error::{KernelError, Result},
@@ -49,6 +53,8 @@ pub async fn sys_clone(
     child_tidptr: TUA<u32>,
     tls: usize,
 ) -> Result<usize> {
+    static NEXT_CPU: AtomicU32 = AtomicU32::new(0);
+
     let flags = CloneFlags::from_bits_truncate(flags);
 
     let new_task = {
@@ -161,7 +167,22 @@ pub async fn sys_clone(
 
     let tid = new_task.tid;
 
-    sched::insert_task(Arc::new(new_task));
+    // TODO: remove hard-coded cpu count.
+    let next_cpu = NEXT_CPU
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+            if x >= 3 { Some(0) } else { Some(x + 1) }
+        })
+        .unwrap();
+
+    if next_cpu == ArchImpl::id() as _ {
+        sched::insert_task(Arc::new(new_task));
+    } else {
+        cpu_messenger::message_cpu(
+            next_cpu as _,
+            cpu_messenger::Message::PutTask(Arc::new(new_task)),
+        )
+        .unwrap();
+    }
 
     // Honour CLONE_*SETTID semantics for the parent and (shared-VM) child.
     if flags.contains(CloneFlags::CLONE_PARENT_SETTID) && !parent_tidptr.is_null() {

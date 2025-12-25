@@ -4,6 +4,8 @@ use crate::{
     arch::ArchImpl,
     drivers::Driver,
     kernel::kpipe::KBuf,
+    process::Task,
+    sched::{insert_task, sys_sched_yield},
     sync::{OnceLock, SpinLock},
 };
 use alloc::{sync::Arc, vec::Vec};
@@ -11,7 +13,7 @@ use libkernel::{
     CpuOps,
     error::{KernelError, Result},
 };
-use log::{info, warn};
+use log::{debug, info, warn};
 
 use super::{
     ClaimedInterrupt, InterruptConfig, InterruptDescriptor, InterruptHandler, get_interrupt_root,
@@ -19,8 +21,8 @@ use super::{
 
 #[derive(Clone)]
 pub enum Message {
-    // Reschedule,
-    // PutTask(Arc<Task>),
+    Reschedule,
+    PutTask(Arc<Task>),
     Ping(u32),
 }
 
@@ -47,10 +49,15 @@ impl InterruptHandler for CpuMessenger {
             .try_pop();
 
         match message {
-            // Some(Message::Reschedule) => return, // We reschedule when returning from an IRQ.
-            // Some(Message::PutTask(task)) => sched::insert_task(task),
             Some(Message::Ping(cpu_id)) => {
                 info!("CPU {} recieved ping from CPU {}", ArchImpl::id(), cpu_id)
+            }
+            Some(Message::PutTask(task)) => {
+                debug!("Putting task on CPU {}", ArchImpl::id());
+                insert_task(task);
+            }
+            Some(Message::Reschedule) => {
+                sys_sched_yield().unwrap();
             }
             None => warn!("Spurious CPU IPI"),
         }
