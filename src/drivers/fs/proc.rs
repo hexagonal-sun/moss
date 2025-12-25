@@ -1,7 +1,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use crate::process::thread_group::Tgid;
-use crate::sched::{SCHED_STATE, current_task};
+use crate::sched::{current_task, find_task_by_descriptor};
 use crate::sync::OnceLock;
 use crate::{
     drivers::{Driver, FilesystemDriver},
@@ -287,10 +287,9 @@ impl Inode for ProcTaskFileInode {
     async fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize> {
         let pid = self.pid;
         let task_list = TASK_LIST.lock_save_irq();
-        // TODO: Does not obtain details for tasks that are on other CPUs
         let id = task_list.iter().find(|(desc, _)| desc.tgid() == pid);
         let task_details = if let Some((desc, _)) = id {
-            SCHED_STATE.borrow().run_queue.get(desc).cloned()
+            find_task_by_descriptor(desc)
         } else {
             None
         };

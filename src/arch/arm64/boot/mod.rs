@@ -34,7 +34,7 @@ use libkernel::{
 };
 use logical_map::setup_logical_map;
 use memory::{setup_allocator, setup_stack_and_heap};
-use secondary::{boot_secondaries, cpu_count, save_idmap, secondary_booted};
+pub(crate) use secondary::{boot_secondaries, cpu_count, save_idmap, secondary_booted};
 
 mod exception_level;
 mod logical_map;

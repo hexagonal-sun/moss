@@ -6,11 +6,105 @@ use crate::{
     sync::OnceLock,
 };
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
+use alloc::vec::Vec;
+use core::cell::{OnceCell, SyncUnsafeCell};
 use core::cmp::Ordering;
-use libkernel::{UserAddressSpace, error::Result};
+use core::sync::atomic::AtomicUsize;
+use libkernel::{CpuOps, UserAddressSpace, error::Result};
 
 pub mod uspc_ret;
 pub mod waker;
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct CpuId(usize);
+
+impl CpuId {
+    pub fn this() -> CpuId {
+        CpuId(ArchImpl::id())
+    }
+}
+
+
+// TODO: arbitrary cap.
+pub static SCHED_STATES: [SyncUnsafeCell<Option<SchedState>>; 128] = [const { SyncUnsafeCell::new(None) }; 128];
+
+per_cpu! {
+    pub static CPU_ID: OnceCell<CpuId> = OnceCell::new;
+}
+
+fn get_cpu_id() -> CpuId {
+    CPU_ID.borrow()
+        .get()
+        .cloned()
+        .unwrap_or_else(|| CpuId::this())
+}
+
+fn get_sched_state() -> &'static mut SchedState {
+    let cpu_id = get_cpu_id();
+    let idx = cpu_id.0;
+    debug_assert!(idx < SCHED_STATES.len(), "CPU id out of bounds");
+
+    // Get a mutable reference to the Option<SchedState> stored in the static array.
+    let slot: &mut Option<SchedState> = unsafe { &mut *SCHED_STATES[idx].get() };
+
+    if slot.is_none() {
+        *slot = Some(SchedState::new());
+    }
+
+    slot.as_mut().expect("SchedState not initialized")
+}
+
+fn get_sched_state_by_id(cpu_id: CpuId) -> Option<&'static mut SchedState> {
+    let idx = cpu_id.0;
+    debug_assert!(idx < SCHED_STATES.len(), "CPU id out of bounds");
+
+    // Get a mutable reference to the Option<SchedState> stored in the static array.
+    let slot: &mut Option<SchedState> = unsafe { &mut *SCHED_STATES[idx].get() };
+
+    if slot.is_none() {
+        *slot = Some(SchedState::new());
+    }
+
+    slot.as_mut()
+}
+
+fn with_cpu_sched_state(cpu_id: CpuId, f: impl FnOnce(&mut SchedState)) {
+    let Some(sched_state) = get_sched_state_by_id(cpu_id) else {
+        log::error!("No sched state for CPU {:?}", cpu_id);
+        return;
+    };
+    f(sched_state);
+}
+
+pub fn all_tasks() -> Vec<Arc<Task>> {
+    let mut tasks = Vec::new();
+
+    for slot in SCHED_STATES.iter() {
+        let slot: &mut Option<SchedState> = unsafe { &mut *slot.get() };
+
+        if let Some(sched_state) = slot.as_mut() {
+            for task in sched_state.run_queue.values() {
+                tasks.push(task.clone());
+            }
+        }
+    }
+
+    tasks
+}
+
+pub fn find_task_by_descriptor(descriptor: &TaskDescriptor) -> Option<Arc<Task>> {
+    for slot in SCHED_STATES.iter() {
+        let slot: &mut Option<SchedState> = unsafe { &mut *slot.get() };
+
+        if let Some(sched_state) = slot.as_mut() {
+            if let Some(task) = sched_state.run_queue.get(descriptor) {
+                return Some(task.clone());
+            }
+        }
+    }
+
+    None
+}
 
 /// Schedule a new task.
 ///
@@ -44,8 +138,19 @@ fn schedule() {
     }
 
     let previous_task = current_task();
-    let mut sched_state = SCHED_STATE.borrow_mut();
+    let sched_state = get_sched_state();
     let next_task = sched_state.find_next_runnable_task();
+
+    static SCHEDULE_COUNT: AtomicUsize = AtomicUsize::new(0);
+    let count = SCHEDULE_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    if count % 1000 == 0 {
+        log::debug!(
+            "Scheduling: CPU {:?}, prev PID {}, next PID {}",
+            get_cpu_id(),
+            previous_task.tid.value(),
+            next_task.tid.value()
+        );
+    }
 
     sched_state
         .switch_to_task(Some(previous_task), next_task.clone())
@@ -59,12 +164,23 @@ pub fn spawn_kernel_work(fut: impl Future<Output = ()> + 'static + Send) {
         .put_kernel_work(Box::pin(fut));
 }
 
-/// Insert the given task onto *this* CPUs runqueue.
-pub fn insert_task(task: Arc<Task>) {
-    SCHED_STATE
-        .borrow_mut()
-        .run_queue
-        .insert(task.descriptor(), task);
+fn get_next_cpu() -> CpuId {
+    static NEXT_CPU: AtomicUsize = AtomicUsize::new(0);
+
+    let cpu_count = ArchImpl::cpu_count();
+    let cpu_id = NEXT_CPU.fetch_add(1, core::sync::atomic::Ordering::Relaxed) % cpu_count;
+
+    CpuId(cpu_id)
+}
+
+/// Insert the given task onto a CPU's run queue.
+pub fn insert_task(task: Arc<Task>, cpu: Option<CpuId>) {
+    let cpu = cpu.unwrap_or_else(get_next_cpu);
+    with_cpu_sched_state(cpu, |sched_state| {
+        sched_state
+            .run_queue
+            .insert(task.descriptor(), task);
+    });
 }
 
 pub struct SchedState {
@@ -166,13 +282,8 @@ impl SchedState {
     }
 }
 
-per_cpu! {
-    pub static SCHED_STATE: SchedState = SchedState::new;
-}
-
 pub fn current_task() -> Arc<Task> {
-    SCHED_STATE
-        .borrow()
+    get_sched_state()
         .running_task
         .as_ref()
         .expect("Current task called before initial task created")
@@ -199,11 +310,10 @@ pub fn sched_init() {
         task_list.insert(init_task.descriptor(), Arc::downgrade(&init_task.state));
     }
 
-    insert_task(idle_task);
-    insert_task(init_task.clone());
+    insert_task(idle_task, Some(CpuId::this()));
+    insert_task(init_task.clone(), Some(CpuId::this()));
 
-    SCHED_STATE
-        .borrow_mut()
+    get_sched_state()
         .switch_to_task(None, init_task)
         .expect("Failed to switch to init task");
 }
@@ -211,10 +321,10 @@ pub fn sched_init() {
 pub fn sched_init_secondary() {
     let idle_task = get_idle_task();
 
-    insert_task(idle_task.clone());
+    // Important to ensure that the idle task is in the TASK_LIST for this CPU.
+    insert_task(idle_task.clone(), Some(CpuId::this()));
 
-    SCHED_STATE
-        .borrow_mut()
+    get_sched_state()
         .switch_to_task(None, idle_task)
         .expect("Failed to swtich to idle task");
 }

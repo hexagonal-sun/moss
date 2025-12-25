@@ -1,4 +1,4 @@
-use super::{SCHED_STATE, current_task, schedule, waker::create_waker};
+use super::{get_sched_state, current_task, schedule, waker::create_waker};
 use crate::process::TASK_LIST;
 use crate::{
     arch::{Arch, ArchImpl},
@@ -159,8 +159,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             // task to execute, removing this task from the
                             // runqueue, reaping it's resouces.
                             if task.state.lock_save_irq().is_finished() {
-                                SCHED_STATE
-                                    .borrow_mut()
+                                get_sched_state()
                                     .run_queue
                                     .remove(&task.descriptor());
                                 let mut task_list = TASK_LIST.lock_save_irq();
