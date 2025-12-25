@@ -34,13 +34,14 @@ use libkernel::{
 };
 use logical_map::setup_logical_map;
 use memory::{setup_allocator, setup_stack_and_heap};
-pub(crate) use secondary::{boot_secondaries, cpu_count, save_idmap, secondary_booted};
+use secondary::{boot_secondaries, cpu_count, save_idmap, secondary_booted};
+use crate::drivers::timer::kick_current_cpu;
 
 mod exception_level;
 mod logical_map;
 mod memory;
 mod paging_bootstrap;
-mod secondary;
+pub(super) mod secondary;
 
 global_asm!(include_str!("start.s"));
 
@@ -147,6 +148,9 @@ fn arch_init_secondary(ctx_frame: *mut ExceptionState) -> *mut ExceptionState {
     if let Some(ic) = get_interrupt_root() {
         ic.enable_core(ArchImpl::id());
     }
+
+    // Arm the per-CPU system timer so this core starts receiving timer IRQs.
+    kick_current_cpu();
 
     ArchImpl::enable_interrupts();
 

@@ -5,8 +5,8 @@ use crate::{
     process::{TASK_LIST, Task, TaskDescriptor, TaskState},
     sync::OnceLock,
 };
-use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
 use alloc::vec::Vec;
+use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
 use core::cell::{OnceCell, SyncUnsafeCell};
 use core::cmp::Ordering;
 use core::sync::atomic::AtomicUsize;
@@ -22,18 +22,23 @@ impl CpuId {
     pub fn this() -> CpuId {
         CpuId(ArchImpl::id())
     }
+
+    pub fn value(&self) -> usize {
+        self.0
+    }
 }
 
-
 // TODO: arbitrary cap.
-pub static SCHED_STATES: [SyncUnsafeCell<Option<SchedState>>; 128] = [const { SyncUnsafeCell::new(None) }; 128];
+pub static SCHED_STATES: [SyncUnsafeCell<Option<SchedState>>; 128] =
+    [const { SyncUnsafeCell::new(None) }; 128];
 
 per_cpu! {
     pub static CPU_ID: OnceCell<CpuId> = OnceCell::new;
 }
 
 fn get_cpu_id() -> CpuId {
-    CPU_ID.borrow()
+    CPU_ID
+        .borrow()
         .get()
         .cloned()
         .unwrap_or_else(|| CpuId::this())
@@ -140,16 +145,9 @@ fn schedule() {
     let previous_task = current_task();
     let sched_state = get_sched_state();
     let next_task = sched_state.find_next_runnable_task();
-
-    static SCHEDULE_COUNT: AtomicUsize = AtomicUsize::new(0);
-    let count = SCHEDULE_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    if count % 1000 == 0 {
-        log::debug!(
-            "Scheduling: CPU {:?}, prev PID {}, next PID {}",
-            get_cpu_id(),
-            previous_task.tid.value(),
-            next_task.tid.value()
-        );
+    if previous_task.tid == next_task.tid {
+        // No context switch needed.
+        return;
     }
 
     sched_state
@@ -177,9 +175,7 @@ fn get_next_cpu() -> CpuId {
 pub fn insert_task(task: Arc<Task>, cpu: Option<CpuId>) {
     let cpu = cpu.unwrap_or_else(get_next_cpu);
     with_cpu_sched_state(cpu, |sched_state| {
-        sched_state
-            .run_queue
-            .insert(task.descriptor(), task);
+        sched_state.run_queue.insert(task.descriptor(), task);
     });
 }
 
@@ -340,4 +336,9 @@ fn get_idle_task() -> Arc<Task> {
 pub fn sys_sched_yield() -> Result<usize> {
     schedule();
     Ok(0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sched_yield() {
+    schedule();
 }

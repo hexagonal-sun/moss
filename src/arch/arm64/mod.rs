@@ -91,7 +91,7 @@ impl Arch for Aarch64 {
     }
 
     fn cpu_count() -> usize {
-        boot::cpu_count()
+        boot::secondary::cpu_count()
     }
 
     fn do_signal(

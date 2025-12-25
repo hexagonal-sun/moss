@@ -1,4 +1,4 @@
-use super::{get_sched_state, current_task, schedule, waker::create_waker};
+use super::{current_task, get_sched_state, schedule, waker::create_waker};
 use crate::process::TASK_LIST;
 use crate::{
     arch::{Arch, ArchImpl},
@@ -78,7 +78,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
     loop {
         match state {
             State::PickNewTask => {
-                // Pick a new task, poteintally context switching to a new task.
+                // Pick a new task, potentially context switching to a new task.
                 schedule();
                 state = State::ProcessKernelWork;
             }
@@ -120,7 +120,10 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             match *task_state {
                                 // The main path we expect to take to sleep the
                                 // task.
-                                TaskState::Running => *task_state = TaskState::Sleeping,
+                                // Task is currently running or is runnable and will now sleep.
+                                TaskState::Running | TaskState::Runnable => {
+                                    *task_state = TaskState::Sleeping
+                                }
                                 // If we were woken between the future returning
                                 // `Poll::Pending` and acquiring the lock above,
                                 // the waker will have put us into this state.
@@ -159,9 +162,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             // task to execute, removing this task from the
                             // runqueue, reaping it's resouces.
                             if task.state.lock_save_irq().is_finished() {
-                                get_sched_state()
-                                    .run_queue
-                                    .remove(&task.descriptor());
+                                get_sched_state().run_queue.remove(&task.descriptor());
                                 let mut task_list = TASK_LIST.lock_save_irq();
                                 task_list.remove(&task.descriptor());
 
@@ -186,9 +187,10 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             let mut task_state = task.state.lock_save_irq();
 
                             match *task_state {
-                                // The main path we expect to take to sleep the
-                                // task.
-                                TaskState::Running => *task_state = TaskState::Sleeping,
+                                // Task is runnable or running, put it to sleep.
+                                TaskState::Running | TaskState::Runnable => {
+                                    *task_state = TaskState::Sleeping
+                                }
                                 // If we were woken between the future returning
                                 // `Poll::Pending` and acquiring the lock above,
                                 // the waker will have put us into this state.

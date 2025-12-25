@@ -5,14 +5,14 @@ use core::{
     time::Duration,
 };
 
-use alloc::{collections::binary_heap::BinaryHeap, sync::Arc};
-
+use super::Driver;
+use crate::arch::ArchImpl;
 use crate::{
     interrupts::{InterruptDescriptor, InterruptHandler},
     sync::{OnceLock, SpinLock},
 };
-
-use super::Driver;
+use alloc::{collections::binary_heap::BinaryHeap, sync::Arc};
+use libkernel::CpuOps;
 
 pub mod armv8_arch;
 
@@ -140,9 +140,15 @@ impl InterruptHandler for SysTimer {
             }
         }
 
-        // Reschedule based on the new head of the queue.
-        self.driver
-            .schedule_interrupt(wake_q.peek().map(|e| e.when));
+        // Always re-arm: either next task/event, or a periodic/preemption tick.
+        let next_deadline = wake_q.peek().map(|e| e.when).or_else(|| {
+            // fallback: schedule a preemption tick in 15 ms
+            // TODO: find a better way to do this
+            let when = self.driver.now() + Duration::from_millis(15);
+            Some(when)
+        });
+
+        self.driver.schedule_interrupt(next_deadline);
     }
 }
 
@@ -184,6 +190,21 @@ impl SysTimer {
         })
         .await
     }
+
+    /// Arms the hardware timer on the current CPU so that the next scheduled
+    /// `WakeupEvent` (or the fallback pre-emption tick) will fire.
+    /// Secondary CPUs should call this right after they have enabled their
+    /// interrupt controller so that they start receiving timer interrupts.
+    pub fn kick_current_cpu(&self) {
+        let wake_q = self.wakeup_q.lock_save_irq();
+
+        let next_deadline = wake_q.peek().map(|e| e.when).or_else(|| {
+            // Fallback: re-use the same 15 ms periodic tick as the primary CPU.
+            Some(self.driver.now() + Duration::from_millis(15))
+        });
+
+        self.driver.schedule_interrupt(next_deadline);
+    }
 }
 
 /// Convenience function for obtaining the current system time. If no
@@ -210,6 +231,14 @@ pub async fn sleep(duration: Duration) {
 
     if let Some(timer) = SYS_TIMER.get() {
         timer.sleep(duration).await
+    }
+}
+
+/// Arms the per-CPU hardware timer for the current core.
+/// See [`SysTimer::kick_current_cpu`]
+pub fn kick_current_cpu() {
+    if let Some(timer) = SYS_TIMER.get() {
+        timer.kick_current_cpu();
     }
 }
 
