@@ -329,12 +329,6 @@ impl SchedState {
             }
         }
 
-        // Trigger context switch, the previous task's state should already been updated
-        // prior to calling this function.
-        if let Some(ref prev_task) = previous_task {
-            debug_assert_eq!(*prev_task.state.lock_save_irq(), TaskState::Runnable);
-        }
-
         *next_task.state.lock_save_irq() = TaskState::Running;
 
         // Update the scheduler's state to reflect the new running task.
