@@ -304,11 +304,11 @@ State:\t{state}
 Tgid:\t{tgid}
 FDSize:\t{fd_size}
 Pid:\t{pid}
-Threads:\t{threads}\n",
+Tasks:\t{tasks}\n",
                     name = name.as_str(),
                     tgid = task.process.tgid,
                     fd_size = task.fd_table.lock_save_irq().len(),
-                    threads = task.process.threads.lock_save_irq().len(),
+                    tasks = task.process.tasks.lock_save_irq().len(),
                 ),
                 TaskFileType::Comm => format!("{name}\n", name = name.as_str()),
                 TaskFileType::State => format!("{state}\n"),

@@ -166,7 +166,14 @@ pub async fn sys_clone(
 
     let tid = new_task.tid;
 
-    sched::insert_task_cross_cpu(Arc::new(new_task));
+    let task = Arc::new(new_task);
+
+    sched::insert_task_cross_cpu(task.clone());
+
+    task.process
+        .tasks
+        .lock_save_irq()
+        .insert(tid, Arc::downgrade(&task));
 
     // Honour CLONE_*SETTID semantics for the parent and (shared-VM) child.
     if flags.contains(CloneFlags::CLONE_PARENT_SETTID) && !parent_tidptr.is_null() {

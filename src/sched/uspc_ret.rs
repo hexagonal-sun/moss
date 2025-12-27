@@ -255,7 +255,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                                 parent.signals.lock_save_irq().set_pending(SigId::SIGCHLD);
                             }
 
-                            for thr_weak in process.threads.lock_save_irq().values() {
+                            for thr_weak in process.tasks.lock_save_irq().values() {
                                 if let Some(thr) = thr_weak.upgrade() {
                                     *thr.state.lock_save_irq() = TaskState::Stopped;
                                 }
@@ -268,7 +268,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             let process = &task.process;
 
                             // Wake up all sleeping threads in the process.
-                            for thr_weak in process.threads.lock_save_irq().values() {
+                            for thr_weak in process.tasks.lock_save_irq().values() {
                                 if let Some(thr) = thr_weak.upgrade() {
                                     let mut st = thr.state.lock_save_irq();
                                     if *st == TaskState::Sleeping {
