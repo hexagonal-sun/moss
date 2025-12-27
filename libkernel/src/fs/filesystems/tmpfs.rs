@@ -563,8 +563,23 @@ where
 
         if no_replace && new_parent.iter().any(|e| e.name == new_name) {
             return Err(FsError::AlreadyExists.into());
-        } else if let Some(entry) = new_parent.iter().position(|e| e.name == new_name) {
-            new_parent.remove(entry);
+        } else if let Some(target_idx) = new_parent.iter().position(|e| e.name == new_name)
+            && let Some(source_idx) = old_parent.iter().position(|e| e.name == old_name)
+        {
+            let target = &new_parent[target_idx];
+            let source = &old_parent[source_idx];
+
+            if target.kind == FileType::Directory {
+                if !target.inode.dir_is_empty()? {
+                    return Err(FsError::DirectoryNotEmpty.into());
+                } else if source.kind != FileType::Directory {
+                    return Err(FsError::IsADirectory.into());
+                }
+            } else if source.kind != FileType::Directory {
+                return Err(FsError::NotADirectory.into());
+            }
+
+            new_parent.remove(target_idx);
         }
 
         let idx = old_parent
@@ -639,7 +654,7 @@ where
         }
     }
 
-    async fn dir_is_empty(&self) -> Result<bool> {
+    fn dir_is_empty(&self) -> Result<bool> {
         Ok(self.entries.lock_save_irq().is_empty())
     }
 }

@@ -247,7 +247,7 @@ pub trait Inode: Send + Sync + Any {
     }
 
     /// Checks if a directory is empty.
-    async fn dir_is_empty(&self) -> Result<bool> {
+    fn dir_is_empty(&self) -> Result<bool> {
         Err(FsError::NotADirectory.into())
     }
 

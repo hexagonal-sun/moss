@@ -87,24 +87,6 @@ pub async fn sys_renameat2(
         return Err(FsError::NotADirectory.into());
     }
 
-    let old_inode = old_parent_inode.lookup(old_name).await?;
-
-    if let Ok(new_inode) = new_parent_inode.lookup(new_name).await {
-        if no_replace {
-            return Err(FsError::AlreadyExists.into());
-        } else if new_inode.getattr().await?.file_type == FileType::Directory {
-            if !new_inode.dir_is_empty().await? {
-                return Err(FsError::AlreadyExists.into());
-            } else if old_inode.getattr().await?.file_type != FileType::Directory {
-                return Err(FsError::IsADirectory.into());
-            }
-        } else if old_inode.getattr().await?.file_type == FileType::Directory
-            && new_inode.getattr().await?.file_type != FileType::Directory
-        {
-            return Err(FsError::NotADirectory.into());
-        }
-    }
-
     if exchange {
         VFS.exchange(old_parent_inode, old_name, new_parent_inode, new_name)
             .await?;
