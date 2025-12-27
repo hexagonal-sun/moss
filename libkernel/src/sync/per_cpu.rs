@@ -75,6 +75,7 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
     ///
     /// # Panics
     /// Panics if the value is already mutably borrowed.
+    #[track_caller]
     pub fn borrow(&self) -> Ref<'_, T> {
         self.get_cell().borrow()
     }
@@ -85,8 +86,20 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
     ///
     /// # Panics
     /// Panics if the value is already borrowed (mutably or immutably).
+    #[track_caller]
     pub fn borrow_mut(&self) -> RefMut<'_, T> {
         self.get_cell().borrow_mut()
+    }
+
+    /// Attempts to immutably borrow the per-CPU data.
+    #[track_caller]
+    pub fn try_borrow(&self) -> Option<Ref<'_, T>> {
+        self.get_cell().try_borrow().ok()
+    }
+
+    #[track_caller]
+    pub fn try_borrow_mut(&self) -> Option<RefMut<'_, T>> {
+        self.get_cell().try_borrow_mut().ok()
     }
 
     /// A convenience method to execute a closure with a mutable reference.
@@ -94,6 +107,7 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
     ///
     /// # Panics
     /// Panics if the value is already borrowed.
+    #[track_caller]
     pub fn with_mut<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut T) -> R,
